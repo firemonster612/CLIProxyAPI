@@ -323,6 +323,8 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		payload = normalizeCodexWebsocketCompletion(payload)
 		eventType := gjson.GetBytes(payload, "type").String()
 		switch eventType {
+		case "codex.rate_limits":
+			recordCodexUsageWindowsFromEvent(auth, payload)
 		case "response.output_item.done":
 			collectCodexOutputItemDone(payload, outputItemsByIndex, &outputItemsFallback)
 		case "response.completed", "response.done", "response.incomplete":

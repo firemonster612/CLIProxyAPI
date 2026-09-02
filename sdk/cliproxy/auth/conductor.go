@@ -134,6 +134,11 @@ type Manager struct {
 	homeSessionSelections map[string]map[homeSessionSelectionKey]*HomeDispatchSelection
 	homeSessionLocks      sync.Map
 	homeSessionAliases    homeSessionAliasCache
+	// burnPins routes all of a provider's requests to one pinned credential
+	// while active and available; see burn_pin.go.
+	burnPins  map[string]BurnPin
+	burnPinMu sync.RWMutex
+
 	// providerOffsets tracks per-model provider rotation state for multi-provider routing.
 	providerOffsets             map[string]int
 	homeDispatchBundle          atomic.Pointer[HomeDispatchBundle]

@@ -76,6 +76,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PATCH("/quota-exceeded/switch-preview-model", s.mgmt.PutSwitchPreviewModel)
 		mgmt.POST("/reset-quota", s.mgmt.ResetQuota)
 
+		mgmt.GET("/burn-pins", s.mgmt.GetBurnPins)
+		mgmt.POST("/burn-pins", s.mgmt.SetBurnPin)
+		mgmt.DELETE("/burn-pins", s.mgmt.DeleteBurnPin)
+
 		mgmt.GET("/api-keys", s.mgmt.GetAPIKeys)
 		mgmt.PUT("/api-keys", s.mgmt.PutAPIKeys)
 		mgmt.PATCH("/api-keys", s.mgmt.PatchAPIKeys)

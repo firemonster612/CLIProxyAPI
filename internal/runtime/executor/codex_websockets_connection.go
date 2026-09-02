@@ -38,6 +38,9 @@ func (e *CodexWebsocketsExecutor) dialCodexWebsocket(ctx context.Context, auth *
 	if err != nil {
 		cliproxyexecutor.MarkUpstreamAttempt(ctx)
 	}
+	if resp != nil {
+		recordCodexUsageWindows(auth, resp.Header)
+	}
 	closer := newWebsocketConnectionCloser(conn)
 	if conn != nil {
 		// Avoid gorilla/websocket flate tail validation issues on some upstreams/Go versions.

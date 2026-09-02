@@ -10,3 +10,12 @@ func TestNormalizeRoutingStrategyWeightedRoundRobin(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeRoutingStrategyClosestToReset(t *testing.T) {
+	for _, input := range []string{"closest-to-reset", "closesttoreset", "ctr"} {
+		got, ok := normalizeRoutingStrategy(input)
+		if !ok || got != "closest-to-reset" {
+			t.Fatalf("normalizeRoutingStrategy(%q) = %q, %v; want closest-to-reset, true", input, got, ok)
+		}
+	}
+}

@@ -28,6 +28,8 @@ type routingRuntimeState struct {
 	strategy           string
 	sessionAffinity    bool
 	sessionAffinityTTL time.Duration
+	ctrWeeklyWeight    float64
+	ctrFiveHourWeight  float64
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
@@ -44,6 +46,10 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 		state.strategy = "weighted-round-robin"
 	case "fill-first", "fillfirst", "ff":
 		state.strategy = "fill-first"
+	case "closest-to-reset", "closesttoreset", "ctr":
+		state.strategy = "closest-to-reset"
+		state.ctrWeeklyWeight = cfg.Routing.ClosestToResetWeeklyWeight
+		state.ctrFiveHourWeight = cfg.Routing.ClosestToResetFiveHourWeight
 	}
 	state.sessionAffinity = cfg.Routing.SessionAffinity
 	if ttl := strings.TrimSpace(cfg.Routing.SessionAffinityTTL); ttl != "" {
@@ -64,6 +70,11 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 		selector = &coreauth.WeightedRoundRobinSelector{}
 	case "fill-first":
 		selector = &coreauth.FillFirstSelector{}
+	case "closest-to-reset":
+		selector = &coreauth.ClosestToResetSelector{
+			WeeklyWeight:   state.ctrWeeklyWeight,
+			FiveHourWeight: state.ctrFiveHourWeight,
+		}
 	default:
 		selector = &coreauth.RoundRobinSelector{}
 	}

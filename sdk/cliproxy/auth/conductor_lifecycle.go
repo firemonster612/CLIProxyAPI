@@ -242,6 +242,11 @@ func (m *Manager) Remove(ctx context.Context, id string) {
 	tombstoneEpoch := m.authEpochs[id]
 	m.mu.Unlock()
 
+	// A burn pin must not outlive its credential: a re-added credential file
+	// regenerates the same deterministic ID, which would silently resurrect
+	// the pin and capture the provider's traffic again.
+	m.ClearBurnPinForAuth(id)
+
 	if !shouldDeferAPIKeyModelAliasRebuild(ctx) {
 		m.rebuildAPIKeyModelAliasFromRuntimeConfig()
 	}

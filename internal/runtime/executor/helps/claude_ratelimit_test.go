@@ -305,3 +305,53 @@ func TestClaudeHeadersIndicateUnifiedRateLimitRejection_AllowedWarning(t *testin
 		})
 	}
 }
+
+func TestParseClaudeUnifiedWindowResets(t *testing.T) {
+	now := time.Now()
+
+	t.Run("nil headers", func(t *testing.T) {
+		fiveHour, weekly := ParseClaudeUnifiedWindowResets(nil)
+		if !fiveHour.Reset.IsZero() || !weekly.Reset.IsZero() {
+			t.Fatalf("expected zero windows, got %v, %v", fiveHour, weekly)
+		}
+	})
+
+	t.Run("unix timestamps case-insensitive", func(t *testing.T) {
+		h := make(http.Header)
+		fiveHourReset := now.Add(2 * time.Hour).Truncate(time.Second)
+		weeklyReset := now.Add(3 * 24 * time.Hour).Truncate(time.Second)
+		h["anthropic-ratelimit-unified-5h-reset"] = []string{strconv.FormatInt(fiveHourReset.Unix(), 10)}
+		h["anthropic-ratelimit-unified-7d-reset"] = []string{strconv.FormatInt(weeklyReset.Unix(), 10)}
+		fiveHour, weekly := ParseClaudeUnifiedWindowResets(h)
+		if !fiveHour.Reset.Equal(fiveHourReset) {
+			t.Fatalf("fiveHour = %v, want %v", fiveHour.Reset, fiveHourReset)
+		}
+		if fiveHour.Span != 0 || weekly.Span != 0 {
+			t.Fatalf("spans = %v, %v, want zero (selector defaults apply)", fiveHour.Span, weekly.Span)
+		}
+		if !weekly.Reset.Equal(weeklyReset) {
+			t.Fatalf("weekly = %v, want %v", weekly.Reset, weeklyReset)
+		}
+	})
+
+	t.Run("one window absent stays zero", func(t *testing.T) {
+		h := make(http.Header)
+		h.Set("Anthropic-Ratelimit-Unified-5h-Reset", strconv.FormatInt(now.Add(time.Hour).Unix(), 10))
+		fiveHour, weekly := ParseClaudeUnifiedWindowResets(h)
+		if fiveHour.Reset.IsZero() {
+			t.Fatal("expected fiveHour to be set")
+		}
+		if !weekly.Reset.IsZero() {
+			t.Fatalf("expected weekly zero, got %v", weekly)
+		}
+	})
+
+	t.Run("garbage value stays zero", func(t *testing.T) {
+		h := make(http.Header)
+		h.Set("Anthropic-Ratelimit-Unified-7d-Reset", "not-a-time")
+		fiveHour, weekly := ParseClaudeUnifiedWindowResets(h)
+		if !fiveHour.Reset.IsZero() || !weekly.Reset.IsZero() {
+			t.Fatalf("expected zero windows, got %v, %v", fiveHour, weekly)
+		}
+	})
+}

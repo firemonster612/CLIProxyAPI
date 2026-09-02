@@ -1052,6 +1052,18 @@ func doClaudeUpstreamRequest(client *http.Client, req *http.Request) (*http.Resp
 	return client.Do(req)
 }
 
+// recordClaudeUnifiedWindowResets feeds the closest-to-reset selector with the
+// unified 5h/7d window reset timestamps Anthropic reports on every Messages
+// response for subscription OAuth credentials. The count_tokens path is not
+// instrumented on purpose: those responses do not carry the unified windows.
+func recordClaudeUnifiedWindowResets(auth *cliproxyauth.Auth, headers http.Header) {
+	if auth == nil {
+		return
+	}
+	fiveHour, weekly := helps.ParseClaudeUnifiedWindowResets(headers)
+	cliproxyauth.RecordUsageWindows(auth.ID, fiveHour, weekly)
+}
+
 // claudeWireHeaderCasing maps Go's canonical header name to the exact casing
 // Claude Code 2.1.220 puts on the wire. Only the names that differ are listed;
 // the other twelve already survive canonicalisation unchanged.

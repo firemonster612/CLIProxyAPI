@@ -9,6 +9,8 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
 const (
@@ -175,6 +177,29 @@ func parseClaudeRateLimitResetWithFuzz(headers http.Header, now time.Time, minFu
 	}).Info("parsed Anthropic rate limit reset headers")
 
 	return &effectiveDuration
+}
+
+// ParseClaudeUnifiedWindowResets extracts the Anthropic unified 5h and 7d
+// window reset timestamps from response headers. Anthropic reports these on
+// every response for subscription OAuth credentials, not only on rejections,
+// which lets callers track how close each credential is to a window reset.
+// Spans are left zero so the selector's per-slot defaults (5h/7d) apply; a
+// zero Reset means the corresponding header was absent or unparseable.
+func ParseClaudeUnifiedWindowResets(headers http.Header) (fiveHour, weekly cliproxyauth.UsageWindow) {
+	if headers == nil {
+		return cliproxyauth.UsageWindow{}, cliproxyauth.UsageWindow{}
+	}
+	if raw := getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-5h-Reset"); raw != "" {
+		if t, ok := parseUnixOrTimestamp(raw); ok {
+			fiveHour.Reset = t
+		}
+	}
+	if raw := getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-7d-Reset"); raw != "" {
+		if t, ok := parseUnixOrTimestamp(raw); ok {
+			weekly.Reset = t
+		}
+	}
+	return fiveHour, weekly
 }
 
 func containsString(list []string, target string) bool {

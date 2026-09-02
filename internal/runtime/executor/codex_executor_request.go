@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -47,6 +48,27 @@ func translateCodexRequestPair(from, to sdktranslator.Format, model string, orig
 	originalTranslated := translate(originalPayload)
 	body := translate(payload)
 	return originalTranslated, body
+}
+
+// recordCodexUsageWindows feeds the closest-to-reset selector with the
+// primary/secondary rate-limit windows the ChatGPT backend reports on Codex
+// responses.
+func recordCodexUsageWindows(auth *cliproxyauth.Auth, headers http.Header) {
+	if auth == nil {
+		return
+	}
+	primary, secondary := helps.ParseCodexUsageWindows(headers, time.Now())
+	cliproxyauth.RecordUsageWindows(auth.ID, primary, secondary)
+}
+
+// recordCodexUsageWindowsFromEvent does the same for the codex.rate_limits
+// events the backend pushes over websocket connections.
+func recordCodexUsageWindowsFromEvent(auth *cliproxyauth.Auth, payload []byte) {
+	if auth == nil {
+		return
+	}
+	primary, secondary := helps.ParseCodexUsageWindowsEvent(payload, time.Now())
+	cliproxyauth.RecordUsageWindows(auth.ID, primary, secondary)
 }
 
 // PrepareRequest injects Codex credentials into the outgoing HTTP request.

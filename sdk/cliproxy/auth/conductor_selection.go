@@ -1440,6 +1440,10 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 	opts.EnsureMetadata()
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = provider
 
+	if auth, burnExecutor, _ := m.burnPinnedPick(ctx, []string{provider}, model, opts, tried); auth != nil {
+		return auth, burnExecutor, nil
+	}
+
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
 	eligibility := authSelectionEligibilityForRequest(ctx, opts)
 
@@ -1697,6 +1701,13 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = provider
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
 
+	// Burn pins are handled in pickNextMixed (execution) and pickNextLegacy
+	// (SelectAuth callers); the scheduler fast path below is only reachable
+	// from pickNextLegacy-free callers, so hook it here too.
+	if auth, executor, _ := m.burnPinnedPick(ctx, []string{provider}, model, opts, tried); auth != nil {
+		return auth, executor, nil
+	}
+
 	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
 		return m.pickNextLegacy(ctx, provider, model, opts, tried)
 	}
@@ -1868,6 +1879,10 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 	}
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = "mixed"
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
+
+	if auth, executor, providerKey := m.burnPinnedPick(ctx, providers, model, opts, tried); auth != nil {
+		return auth, executor, providerKey, nil
+	}
 
 	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
 		return m.pickNextMixedLegacy(ctx, providers, model, opts, tried)

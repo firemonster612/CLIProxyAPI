@@ -214,7 +214,13 @@ quota-exceeded:
 
 # Routing strategy for selecting credentials when multiple match.
 routing:
-  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first
+  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first, closest-to-reset
+  # closest-to-reset prefers the credential whose usage windows reset soonest, scored as a
+  # weighted blend of the weekly and 5-hour windows (reported by Claude and Codex OAuth
+  # credentials; others fall back to round-robin). Optional weights, each defaulting
+  # individually (0.7 / 0.3, only the ratio matters):
+  # closest-to-reset-weekly-weight: 0.7
+  # closest-to-reset-five-hour-weight: 0.3
   # weighted-round-robin uses each credential's integer weight (default 1, maximum 1,000,000).
   # Non-positive weights exclude the credential while this strategy is active.
   # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.

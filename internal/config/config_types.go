@@ -232,8 +232,19 @@ type QuotaExceeded struct {
 // RoutingConfig configures how credentials are selected for requests.
 type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
-	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first".
+	// Supported values: "round-robin" (default), "weighted-round-robin",
+	// "fill-first", "closest-to-reset".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+
+	// ClosestToResetWeeklyWeight and ClosestToResetFiveHourWeight bias the
+	// closest-to-reset strategy between the weekly (7d) and 5-hour usage
+	// windows reported by Claude and Codex OAuth credentials. Each credential
+	// is scored by the weighted fraction of its windows still remaining and
+	// the lowest score wins. A non-positive or omitted value falls back to
+	// that weight's default (0.7 weekly, 0.3 five-hour); the pair is
+	// normalized so only the ratio matters.
+	ClosestToResetWeeklyWeight   float64 `yaml:"closest-to-reset-weekly-weight,omitempty" json:"closest-to-reset-weekly-weight,omitempty"`
+	ClosestToResetFiveHourWeight float64 `yaml:"closest-to-reset-five-hour-weight,omitempty" json:"closest-to-reset-five-hour-weight,omitempty"`
 
 	// SessionAffinity enables universal session-sticky routing for all clients.
 	// Explicit Claude Code, Codex, OpenCode, and pi session headers are preferred,

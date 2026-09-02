@@ -75,3 +75,23 @@ func TestApplyManagerConfigStopsReplacedServiceAffinitySelector(t *testing.T) {
 		t.Fatal("expected replaced selector to be stopped during routing config apply")
 	}
 }
+
+func TestClosestToResetRoutingSelector(t *testing.T) {
+	state := normalizedRoutingRuntimeState(&internalconfig.Config{
+		Routing: internalconfig.RoutingConfig{
+			Strategy:                     "ctr",
+			ClosestToResetWeeklyWeight:   0.8,
+			ClosestToResetFiveHourWeight: 0.2,
+		},
+	})
+	if state.strategy != "closest-to-reset" {
+		t.Fatalf("strategy = %q, want closest-to-reset", state.strategy)
+	}
+	selector, ok := newRoutingSelector(state).(*coreauth.ClosestToResetSelector)
+	if !ok {
+		t.Fatalf("selector type = %T, want *auth.ClosestToResetSelector", newRoutingSelector(state))
+	}
+	if selector.WeeklyWeight != 0.8 || selector.FiveHourWeight != 0.2 {
+		t.Fatalf("selector weights = %v, %v, want 0.8, 0.2", selector.WeeklyWeight, selector.FiveHourWeight)
+	}
+}
