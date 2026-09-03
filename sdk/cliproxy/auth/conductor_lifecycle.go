@@ -330,6 +330,13 @@ func (m *Manager) Load(ctx context.Context) error {
 	m.rebuildAPIKeyModelAliasLocked(cfg)
 	m.mu.Unlock()
 
+	// A burn pin must not outlive its credential: a reload that drops the
+	// credential file would otherwise leave the pin behind, and a re-added
+	// file regenerates the same deterministic ID, silently resurrecting the
+	// pin. Mirrors the explicit Remove path.
+	for _, rt := range removedTombstones {
+		m.ClearBurnPinForAuth(rt.id)
+	}
 	if m.scheduler != nil {
 		for _, rt := range removedTombstones {
 			m.scheduler.RecordRemovalTombstone(rt.id, rt.epoch)

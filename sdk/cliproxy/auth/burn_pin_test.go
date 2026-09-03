@@ -218,3 +218,30 @@ func TestRemove_ClearsBurnPin(t *testing.T) {
 		t.Fatalf("pins after Remove = %+v, want none", pins)
 	}
 }
+
+func TestLoad_ClearsBurnPinForRemovedAuth(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryAuthTestStore()
+	if _, err := store.Save(ctx, &Auth{ID: "burn-reload", Provider: "claude", Status: StatusActive}); err != nil {
+		t.Fatalf("store.Save() error = %v", err)
+	}
+	m := NewManager(store, nil, nil)
+	m.RegisterExecutor(burnPinStubExecutor{id: "claude"})
+	if errLoad := m.Load(ctx); errLoad != nil {
+		t.Fatalf("Load() error = %v", errLoad)
+	}
+	if _, err := m.SetBurnPin("burn-reload", 0); err != nil {
+		t.Fatalf("SetBurnPin() error = %v", err)
+	}
+	// The credential file vanishes and the watcher reloads: the pin must not
+	// survive to capture traffic when the same ID is re-added later.
+	if err := store.Delete(ctx, "burn-reload"); err != nil {
+		t.Fatalf("store.Delete() error = %v", err)
+	}
+	if errLoad := m.Load(ctx); errLoad != nil {
+		t.Fatalf("Load() after delete error = %v", errLoad)
+	}
+	if pins := m.BurnPins(); len(pins) != 0 {
+		t.Fatalf("pins after reload = %+v, want none", pins)
+	}
+}
