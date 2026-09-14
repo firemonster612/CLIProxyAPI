@@ -2,11 +2,21 @@ package auth
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+)
+
+// Reset-bound burn pin modes: the pin expires when the credential's observed
+// usage window resets instead of after a fixed duration.
+const (
+	// BurnWindowFiveHour pins until the credential's 5-hour unified window resets.
+	BurnWindowFiveHour = "five-hour-reset"
+	// BurnWindowWeekly pins until the credential's weekly (7d) unified window resets.
+	BurnWindowWeekly = "weekly-reset"
 )
 
 // BurnPin routes every request for one provider to a single credential until
@@ -20,6 +30,9 @@ type BurnPin struct {
 	Provider string `json:"provider"`
 	// ExpiresAt is when the pin lapses. Zero means indefinite.
 	ExpiresAt time.Time `json:"expires_at"`
+	// Mode records how the expiry was chosen: a BurnWindow* constant for
+	// reset-bound pins, empty for fixed durations and indefinite pins.
+	Mode string `json:"mode,omitempty"`
 }
 
 // Expired reports whether the pin has lapsed at the supplied time.
@@ -31,6 +44,85 @@ func (p BurnPin) Expired(now time.Time) bool {
 // credential. A non-positive duration pins indefinitely. Setting a pin
 // replaces any existing pin for the same provider.
 func (m *Manager) SetBurnPin(authID string, duration time.Duration) (BurnPin, error) {
+	var expiresAt time.Time
+	if duration > 0 {
+		expiresAt = time.Now().Add(duration)
+	}
+	return m.setBurnPin(authID, expiresAt, "")
+}
+
+// SetBurnPinUntilReset pins the credential's provider to that credential until
+// the credential's observed usage window resets. window must be
+// BurnWindowFiveHour or BurnWindowWeekly. When no future reset instant is
+// known for the credential (it has served no request since startup and its
+// persisted quota snapshot carries none), the pin is refused with code
+// "reset_unknown" rather than guessed.
+func (m *Manager) SetBurnPinUntilReset(authID string, window string) (BurnPin, error) {
+	if m == nil {
+		return BurnPin{}, &Error{Code: "manager_unavailable", Message: "auth manager unavailable"}
+	}
+	if window != BurnWindowFiveHour && window != BurnWindowWeekly {
+		return BurnPin{}, &Error{Code: "invalid_request", Message: "unknown burn window: " + window}
+	}
+	authID = strings.TrimSpace(authID)
+	m.mu.RLock()
+	auth := m.auths[authID]
+	var authCopy *Auth
+	if auth != nil {
+		authCopy = auth.Clone()
+	}
+	m.mu.RUnlock()
+	if authCopy == nil {
+		return BurnPin{}, &Error{Code: "auth_not_found", Message: "auth not found"}
+	}
+	reset, errReset := burnResetTime(authCopy, window, time.Now())
+	if errReset != nil {
+		return BurnPin{}, errReset
+	}
+	return m.setBurnPin(authID, reset, window)
+}
+
+// burnResetTime resolves the next reset instant for the requested window. The
+// in-memory usage-window registry is authoritative; the credential's persisted
+// quota signal snapshot is the fallback so reset-bound pins survive a restart
+// that empties the registry.
+func burnResetTime(auth *Auth, window string, now time.Time) (time.Time, error) {
+	short, long, _ := UsageWindowsFor(auth.ID)
+	target := short.Reset
+	signalKey := "Anthropic-Ratelimit-Unified-5h-Reset"
+	if window == BurnWindowWeekly {
+		target = long.Reset
+		signalKey = "Anthropic-Ratelimit-Unified-7d-Reset"
+	}
+	if target.After(now) {
+		return target, nil
+	}
+	if parsed, ok := parseResetInstant(auth.Quota.Signals[signalKey]); ok && parsed.After(now) {
+		return parsed, nil
+	}
+	return time.Time{}, &Error{
+		Code:    "reset_unknown",
+		Message: "no upcoming " + window + " known for this credential yet; send a request through it first or use a fixed duration",
+	}
+}
+
+// parseResetInstant accepts the reset formats seen in unified rate-limit
+// headers: unix seconds or an RFC 3339 timestamp.
+func parseResetInstant(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if seconds, errParse := strconv.ParseInt(value, 10, 64); errParse == nil {
+		return time.Unix(seconds, 0), true
+	}
+	if parsed, errParse := time.Parse(time.RFC3339, value); errParse == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
+}
+
+func (m *Manager) setBurnPin(authID string, expiresAt time.Time, mode string) (BurnPin, error) {
 	if m == nil {
 		return BurnPin{}, &Error{Code: "manager_unavailable", Message: "auth manager unavailable"}
 	}
@@ -56,16 +148,19 @@ func (m *Manager) SetBurnPin(authID string, duration time.Duration) (BurnPin, er
 	if provider == "" {
 		return BurnPin{}, &Error{Code: "invalid_auth", Message: "auth has no provider"}
 	}
-	pin := BurnPin{AuthID: authID, Provider: provider}
-	if duration > 0 {
-		pin.ExpiresAt = time.Now().Add(duration)
-	}
+	pin := BurnPin{AuthID: authID, Provider: provider, ExpiresAt: expiresAt, Mode: mode}
 	m.burnPinMu.Lock()
 	if m.burnPins == nil {
 		m.burnPins = make(map[string]BurnPin)
 	}
 	m.burnPins[provider] = pin
 	m.burnPinMu.Unlock()
+	// Drop the provider's session-affinity bindings so live sessions reroute
+	// to the pinned credential now and cannot snap back to a stale binding
+	// once the pin lapses.
+	if selector, ok := m.Selector().(*SessionAffinitySelector); ok {
+		selector.ClearProvider(provider)
+	}
 	return pin, nil
 }
 

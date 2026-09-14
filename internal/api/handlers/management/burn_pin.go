@@ -35,9 +35,11 @@ func (h *Handler) GetBurnPins(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"pins": entries})
 }
 
-// SetBurnPin pins a provider's traffic to one credential for a duration.
-// duration_seconds of 0 pins indefinitely; negative or oversized values are
-// rejected rather than reinterpreted.
+// SetBurnPin pins a provider's traffic to one credential. The expiry is either
+// a fixed duration (duration_seconds; 0 pins indefinitely; negative or
+// oversized values are rejected rather than reinterpreted) or, via until, the
+// credential's next observed usage-window reset ("five-hour-reset" /
+// "weekly-reset"). The two are mutually exclusive.
 func (h *Handler) SetBurnPin(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
@@ -46,6 +48,7 @@ func (h *Handler) SetBurnPin(c *gin.Context) {
 	var req struct {
 		AuthIndex       string `json:"auth_index"`
 		DurationSeconds int64  `json:"duration_seconds"`
+		Until           string `json:"until"`
 	}
 	if errBindJSON := c.ShouldBindJSON(&req); errBindJSON != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -54,6 +57,17 @@ func (h *Handler) SetBurnPin(c *gin.Context) {
 	authIndex := strings.TrimSpace(req.AuthIndex)
 	if authIndex == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "auth_index is required"})
+		return
+	}
+	until := strings.TrimSpace(req.Until)
+	switch until {
+	case "", coreauth.BurnWindowFiveHour, coreauth.BurnWindowWeekly:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "until must be five-hour-reset or weekly-reset"})
+		return
+	}
+	if until != "" && req.DurationSeconds != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "duration_seconds and until are mutually exclusive"})
 		return
 	}
 	if req.DurationSeconds < 0 || req.DurationSeconds > maxBurnPinDurationSeconds {
@@ -65,7 +79,13 @@ func (h *Handler) SetBurnPin(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "auth not found"})
 		return
 	}
-	pin, errSet := h.authManager.SetBurnPin(auth.ID, time.Duration(req.DurationSeconds)*time.Second)
+	var pin coreauth.BurnPin
+	var errSet error
+	if until != "" {
+		pin, errSet = h.authManager.SetBurnPinUntilReset(auth.ID, until)
+	} else {
+		pin, errSet = h.authManager.SetBurnPin(auth.ID, time.Duration(req.DurationSeconds)*time.Second)
+	}
 	if errSet != nil {
 		c.JSON(burnPinErrorStatus(errSet), gin.H{"error": errSet.Error()})
 		return
@@ -113,6 +133,8 @@ func burnPinErrorStatus(err error) int {
 			return http.StatusNotFound
 		case "invalid_request", "invalid_auth":
 			return http.StatusBadRequest
+		case "reset_unknown":
+			return http.StatusConflict
 		case "home_unavailable", "manager_unavailable":
 			return http.StatusServiceUnavailable
 		}
@@ -129,6 +151,9 @@ func burnPinEntry(pin coreauth.BurnPin, authIndex string, now time.Time) gin.H {
 	}
 	if authIndex != "" {
 		entry["auth_index"] = authIndex
+	}
+	if pin.Mode != "" {
+		entry["mode"] = pin.Mode
 	}
 	if !pin.ExpiresAt.IsZero() {
 		entry["expires_at"] = pin.ExpiresAt.Format(time.RFC3339)

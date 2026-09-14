@@ -91,6 +91,19 @@ func RecordUsageWindows(authID string, short, long UsageWindow) {
 	usageWindowRegistry.m[authID] = entry
 }
 
+// UsageWindowsFor returns the most recently observed usage windows for a
+// credential. ok reports whether any window has been observed at all; each
+// returned window can still individually be zero.
+func UsageWindowsFor(authID string) (short, long UsageWindow, ok bool) {
+	usageWindowRegistry.mu.RLock()
+	defer usageWindowRegistry.mu.RUnlock()
+	entry, found := usageWindowRegistry.m[authID]
+	if !found || !entry.hasData() {
+		return UsageWindow{}, UsageWindow{}, false
+	}
+	return entry.short, entry.long, true
+}
+
 // snapshotUsageWindows reads the registry entries for a candidate set under a
 // single read lock.
 func snapshotUsageWindows(auths []*Auth) map[string]usageWindowEntry {

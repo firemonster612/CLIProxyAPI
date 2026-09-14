@@ -852,6 +852,25 @@ func (m *MerklePrefixMatcher) InvalidateAuth(authID string) {
 	}
 }
 
+// InvalidateNamespacePrefix removes every binding whose namespace starts with
+// prefix. Namespaces are "lcp:v1::<provider>::<model>::<scope>", so a
+// "lcp:v1::<provider>::" prefix drops one provider's bindings.
+func (m *MerklePrefixMatcher) InvalidateNamespacePrefix(prefix string) {
+	if m == nil || prefix == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for name, namespace := range m.groups {
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		for _, group := range namespace.groups {
+			m.removeGroupLocked(group)
+		}
+	}
+}
+
 // Clear removes all remembered prefix bindings.
 func (m *MerklePrefixMatcher) Clear() {
 	if m == nil {
