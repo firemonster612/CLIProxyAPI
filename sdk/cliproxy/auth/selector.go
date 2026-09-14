@@ -1182,23 +1182,6 @@ func (s *SessionAffinitySelector) InvalidateAuth(authID string) {
 	}
 }
 
-// ClearProvider drops every session binding for one provider, explicit and
-// LCP alike. Used when a burn pin engages: live sessions must reroute to the
-// pinned credential immediately and must not snap back to a stale binding
-// once the pin lapses.
-func (s *SessionAffinitySelector) ClearProvider(provider string) {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	if s == nil || provider == "" {
-		return
-	}
-	if s.cache != nil {
-		s.cache.InvalidatePrefix(provider + "::")
-	}
-	if s.matcher != nil {
-		s.matcher.InvalidateNamespacePrefix("lcp:v1::" + provider + "::")
-	}
-}
-
 // OnResult handles session affinity binding or release based on execution outcome.
 func (s *SessionAffinitySelector) OnResult(res Result) {
 	if s == nil || res.AuthID == "" {

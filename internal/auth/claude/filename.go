@@ -14,9 +14,11 @@ import (
 // email-only format remains the fallback for tokens without identity metadata.
 func CredentialFileName(email, organizationUUID, accountUUID string) string {
 	email = strings.TrimSpace(email)
-	seed := strings.TrimSpace(organizationUUID)
+	// Case-normalized so the same UUID serialized with different casing
+	// cannot yield two files for one identity.
+	seed := strings.ToLower(strings.TrimSpace(organizationUUID))
 	if seed == "" {
-		seed = strings.TrimSpace(accountUUID)
+		seed = strings.ToLower(strings.TrimSpace(accountUUID))
 	}
 	if seed == "" {
 		return fmt.Sprintf("claude-%s.json", email)

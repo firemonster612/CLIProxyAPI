@@ -81,6 +81,9 @@ func TestSetBurnPin_ClearsProviderSessionAffinity(t *testing.T) {
 		}
 	}
 	affinity.cache.Set("claude::session-1::claude-model", "burn-aff-b")
+	// Mixed-route bindings live under the "mixed" namespace but still point at
+	// the provider's credentials; they must clear too.
+	affinity.cache.Set("mixed::session-3::claude-model", "burn-aff-b")
 	affinity.cache.Set("gemini::session-2::gemini-model", "gemini-auth")
 
 	if _, err := m.SetBurnPin("burn-aff-a", time.Hour); err != nil {
@@ -89,6 +92,9 @@ func TestSetBurnPin_ClearsProviderSessionAffinity(t *testing.T) {
 
 	if _, ok := affinity.cache.Get("claude::session-1::claude-model"); ok {
 		t.Fatal("expected claude session binding to be cleared by burn pin")
+	}
+	if _, ok := affinity.cache.Get("mixed::session-3::claude-model"); ok {
+		t.Fatal("expected mixed-namespace binding to a claude credential to be cleared by burn pin")
 	}
 	if _, ok := affinity.cache.Get("gemini::session-2::gemini-model"); !ok {
 		t.Fatal("expected other providers' bindings to survive a claude burn pin")

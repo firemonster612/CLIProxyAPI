@@ -64,6 +64,11 @@ func (m *Manager) SetBurnPinUntilReset(authID string, window string) (BurnPin, e
 	if window != BurnWindowFiveHour && window != BurnWindowWeekly {
 		return BurnPin{}, &Error{Code: "invalid_request", Message: "unknown burn window: " + window}
 	}
+	if m.HomeEnabled() {
+		// Same refusal setBurnPin would give; checked here so an until pin
+		// fails with the same code as a duration pin instead of reset_unknown.
+		return BurnPin{}, &Error{Code: "home_unavailable", Message: "burn pins are unavailable while Home is enabled"}
+	}
 	authID = strings.TrimSpace(authID)
 	m.mu.RLock()
 	auth := m.auths[authID]
@@ -107,14 +112,15 @@ func burnResetTime(auth *Auth, window string, now time.Time) (time.Time, error) 
 }
 
 // parseResetInstant accepts the reset formats seen in unified rate-limit
-// headers: unix seconds or an RFC 3339 timestamp.
+// headers: unix seconds (fractional allowed) or an RFC 3339 timestamp,
+// matching the executor-side window parser's semantics.
 func parseResetInstant(value string) (time.Time, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return time.Time{}, false
 	}
-	if seconds, errParse := strconv.ParseInt(value, 10, 64); errParse == nil {
-		return time.Unix(seconds, 0), true
+	if seconds, errParse := strconv.ParseFloat(value, 64); errParse == nil {
+		return time.Unix(int64(seconds), 0), true
 	}
 	if parsed, errParse := time.Parse(time.RFC3339, value); errParse == nil {
 		return parsed, true
@@ -141,6 +147,14 @@ func (m *Manager) setBurnPin(authID string, expiresAt time.Time, mode string) (B
 	if auth != nil {
 		provider = executorKeyFromAuth(auth)
 	}
+	var providerAuthIDs []string
+	if provider != "" {
+		for id, candidate := range m.auths {
+			if candidate != nil && executorKeyFromAuth(candidate) == provider {
+				providerAuthIDs = append(providerAuthIDs, id)
+			}
+		}
+	}
 	m.mu.RUnlock()
 	if auth == nil {
 		return BurnPin{}, &Error{Code: "auth_not_found", Message: "auth not found"}
@@ -155,11 +169,15 @@ func (m *Manager) setBurnPin(authID string, expiresAt time.Time, mode string) (B
 	}
 	m.burnPins[provider] = pin
 	m.burnPinMu.Unlock()
-	// Drop the provider's session-affinity bindings so live sessions reroute
-	// to the pinned credential now and cannot snap back to a stale binding
-	// once the pin lapses.
+	// Drop every session binding to the provider's credentials so live
+	// sessions reroute to the pinned credential now and cannot snap back to a
+	// stale binding once the pin lapses. Invalidating by credential rather
+	// than by cache-key prefix also covers bindings recorded under the
+	// "mixed" routing namespace.
 	if selector, ok := m.Selector().(*SessionAffinitySelector); ok {
-		selector.ClearProvider(provider)
+		for _, id := range providerAuthIDs {
+			selector.InvalidateAuth(id)
+		}
 	}
 	return pin, nil
 }

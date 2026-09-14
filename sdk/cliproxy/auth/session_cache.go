@@ -379,26 +379,6 @@ func (c *SessionCache) Invalidate(sessionID string) {
 	}
 }
 
-// InvalidatePrefix removes every binding group with an alias that starts with
-// prefix. Cache keys are "<provider>::<session>::<model>", so a provider
-// prefix drops all of that provider's session bindings at once.
-func (c *SessionCache) InvalidatePrefix(prefix string) {
-	if c == nil || prefix == "" {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.ensureInitializedLocked()
-	for _, group := range c.groups {
-		for _, alias := range group.aliases {
-			if strings.HasPrefix(alias, prefix) {
-				c.removeAliasGroupLocked(group)
-				break
-			}
-		}
-	}
-}
-
 // InvalidateAuth removes all sessions bound to a specific auth ID.
 // Used when an auth becomes unavailable.
 func (c *SessionCache) InvalidateAuth(authID string) {
