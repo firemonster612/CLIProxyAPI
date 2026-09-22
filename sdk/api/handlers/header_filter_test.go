@@ -57,3 +57,30 @@ func TestFilterUpstreamHeaders_ReturnsNilWhenAllHeadersBlocked(t *testing.T) {
 		t.Fatalf("expected nil when all headers are filtered, got %#v", filtered)
 	}
 }
+
+func TestDownstreamHeadersPreserveCodexUsageWithoutGeneralPassthrough(t *testing.T) {
+	src := http.Header{
+		"X-Codex-Primary-Used-Percent":         []string{"42"},
+		"X-Codex-Secondary-Reset-At":           []string{"1787588999"},
+		"X-Codex-Credits-Has-Credits":          []string{"false"},
+		"X-Codex-Internal-Account-Id":          []string{"private"},
+		"X-Unrelated-Upstream-Response-Header": []string{"private"},
+	}
+
+	filtered := downstreamHeadersFromExecutor(src, false)
+	if got := filtered.Get("X-Codex-Primary-Used-Percent"); got != "42" {
+		t.Fatalf("X-Codex-Primary-Used-Percent = %q, want 42", got)
+	}
+	if got := filtered.Get("X-Codex-Secondary-Reset-At"); got != "1787588999" {
+		t.Fatalf("X-Codex-Secondary-Reset-At = %q, want 1787588999", got)
+	}
+	if got := filtered.Get("X-Codex-Credits-Has-Credits"); got != "false" {
+		t.Fatalf("X-Codex-Credits-Has-Credits = %q, want false", got)
+	}
+	if got := filtered.Get("X-Unrelated-Upstream-Response-Header"); got != "" {
+		t.Fatalf("unrelated upstream header leaked with passthrough disabled: %q", got)
+	}
+	if got := filtered.Get("X-Codex-Internal-Account-Id"); got != "" {
+		t.Fatalf("unknown Codex header leaked with passthrough disabled: %q", got)
+	}
+}

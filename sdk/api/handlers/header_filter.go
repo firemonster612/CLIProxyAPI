@@ -92,6 +92,50 @@ func FilterUpstreamHeaders(src http.Header) http.Header {
 	return dst
 }
 
+// filterCodexUsageHeaders keeps the account quota snapshot Codex clients use
+// to publish account/rateLimits/updated notifications. These values describe
+// the credential selected for this response and contain no authentication
+// material.
+func filterCodexUsageHeaders(src http.Header) http.Header {
+	var dst http.Header
+	for key, values := range src {
+		if !isCodexUsageHeader(key) {
+			continue
+		}
+		if dst == nil {
+			dst = make(http.Header)
+		}
+		dst[key] = append([]string(nil), values...)
+	}
+	return dst
+}
+
+func isCodexUsageHeader(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "x-codex-active-limit" || lower == "x-codex-plan-type" ||
+		strings.HasPrefix(lower, "x-codex-credits-") {
+		return true
+	}
+	if !strings.HasPrefix(lower, "x-codex-") {
+		return false
+	}
+	for _, marker := range []string{
+		"-allowed",
+		"-limit-reached",
+		"-limit-name",
+		"-used-percent",
+		"-window-minutes",
+		"-reset-after-seconds",
+		"-reset-at",
+		"-over-secondary-limit-percent",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func connectionScopedHeaders(src http.Header) map[string]struct{} {
 	scoped := make(map[string]struct{})
 	for _, rawValue := range src.Values("Connection") {

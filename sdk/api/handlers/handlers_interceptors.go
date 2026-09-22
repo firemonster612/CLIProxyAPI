@@ -288,7 +288,7 @@ func finalInterceptorHeaders(current, intercepted http.Header) http.Header {
 
 func downstreamHeadersFromExecutor(headers http.Header, passthrough bool) http.Header {
 	if !passthrough {
-		return nil
+		return filterCodexUsageHeaders(headers)
 	}
 	return FilterUpstreamHeaders(headers)
 }
@@ -297,7 +297,14 @@ func downstreamHeadersAfterInterceptors(baseRaw, finalRaw http.Header, passthrou
 	if passthrough {
 		return FilterUpstreamHeaders(finalRaw)
 	}
-	return FilterUpstreamHeaders(diffHeaders(baseRaw, finalRaw))
+	downstream := filterCodexUsageHeaders(finalRaw)
+	for key, values := range FilterUpstreamHeaders(diffHeaders(baseRaw, finalRaw)) {
+		if downstream == nil {
+			downstream = make(http.Header)
+		}
+		downstream[key] = values
+	}
+	return downstream
 }
 
 func diffHeaders(base, next http.Header) http.Header {
