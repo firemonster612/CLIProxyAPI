@@ -97,12 +97,13 @@
 //	|  |  |- Field 5  (bytes):  ABSENT
 //	|  |  |- Field 6  (bytes):  ABSENT
 //	|  |  |- Field 7  (varint): unknown [optional]
-//	|  |  |- Field 8  (bytes):  block kind [optional]
+//	|  |  |- Field 8  (bytes):  block kind [optional under v2; "thinking" or "narration" from v4]
 //	|  |  `- Field 11 (bytes):  context id [optional, canonical UUID]
 //	|  |- Field 2 (bytes): nonce [observed as 12B, not required]
 //	|  |- Field 3 (bytes): session [observed as 12B, not required]
 //	|  |- Field 4 (bytes): digest [observed as 48B, not required]
-//	|  `- Field 5 (bytes): opaque signing carrier [required, non-empty]
+//	|  `- Field 5 (bytes): opaque signing carrier [required, non-empty; the
+//	|     relocated signature bytes from v4]
 //	`- Field 3 (varint): trailer [optional]
 //
 // CAIS validation is structural rather than an exact replay of the observed
@@ -112,9 +113,12 @@
 // complete container/channel tree, absent channel fields 5 and 6, a non-empty
 // container field 5 carrier, and known envelope/channel generation identifiers.
 // Observed-but-incidental channel-version, field-7, and trailer values are
-// checked only for wire type. Block kind accepts any value but must remain
-// well-formed UTF-8 text. An upstream value bump therefore cannot silently erase
-// conversation history.
+// checked only for wire type. Under envelope version 2 the block kind accepts
+// any value but must remain well-formed UTF-8 text; from envelope version 4
+// (upstream's CAQS layout, e.g. claude-fable-5-1 / claude-fable-5-1-max) the
+// container field 5 carrier holds the relocated signature bytes, model_text
+// stays omitted, and the block kind narrows to "thinking" or "narration". An
+// upstream value bump therefore cannot silently erase conversation history.
 //
 // This parser performs no cryptographic verification. The model-tagged branch
 // checks only that opaque signature bytes and the model marker are present, and
@@ -122,7 +126,9 @@
 // payload-only discriminator for model-free CAIS is both generation-stable and
 // provider-distinguishing. Proof of origin requires trusted provenance from the
 // response path or cache envelope, so this result must never be treated as
-// authentication. Measured adversarial controls for the predicate that ships:
+// authentication. Measured adversarial controls for the predicate that ships
+// (measured before the CAQS block-kind narrowing, which only removes
+// acceptances):
 //
 //	uniform-random, first byte forced 0x08       n=1,000,000  shipped=0      spine-only=0
 //	random well-formed protobuf, 0x08 first      n=1,000,000  shipped=0      spine-only=25
@@ -948,9 +954,9 @@ func InspectClaudeCAISSignature(rawSignature string) (*ClaudeCAISSignatureInfo, 
 
 	// Model-free CAIS has no provider literal. Require its moved carrier and both
 	// known generation identifiers, while retaining the model-tagged sibling's
-	// tolerance for incidental varint values and optional fields. The carrier is
-	// validated before the generation identifiers so malformed input never
-	// reports as an unknown generation.
+	// tolerance for incidental varint values and optional fields. The carrier and
+	// the CAQS block kind are validated before the generation identifiers so
+	// malformed input never reports as an unknown generation.
 	switch {
 	case !haveEnvelopeVersion:
 		return nil, fmt.Errorf("invalid Claude model-free CAIS signature: missing envelope version")
@@ -960,10 +966,19 @@ func InspectClaudeCAISSignature(rawSignature string) (*ClaudeCAISSignatureInfo, 
 		return nil, fmt.Errorf("invalid Claude model-free CAIS signature: container field 5 carrier must be bytes")
 	case len(containerCarrier) == 0:
 		return nil, fmt.Errorf("invalid Claude model-free CAIS signature: container field 5 carrier must not be empty")
+	case info.EnvelopeVersion >= 4 && info.BlockKind != "thinking" && info.BlockKind != "narration":
+		return nil, fmt.Errorf("invalid Claude CAQS signature: expected block kind \"thinking\" or \"narration\", got %q", info.BlockKind)
 	case !isKnownClaudeCAISIdentifier(knownClaudeCAISEnvelopeVersions[:], info.EnvelopeVersion):
 		return nil, &claudeCAISUnknownGenerationError{identifier: "envelope version", value: info.EnvelopeVersion}
 	case !isKnownClaudeCAISIdentifier(knownClaudeCAISChannelIDs[:], info.ChannelID):
 		return nil, &claudeCAISUnknownGenerationError{identifier: "channel_id", value: info.ChannelID}
+	}
+
+	// From envelope version 4 (CAQS) the container carrier holds the relocated
+	// signature bytes; report its length the way the model-tagged branch reports
+	// channel field 5.
+	if info.EnvelopeVersion >= 4 {
+		info.SignatureLen = len(containerCarrier)
 	}
 
 	return info, nil

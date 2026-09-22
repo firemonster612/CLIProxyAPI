@@ -298,10 +298,11 @@ func measuredClaudeCodeHelperHeadersMatch(headers http.Header, cfg *config.Confi
 	// x-client-request-id.
 	//
 	// 2.1.258 (@anthropic-ai/sdk 0.112.1), measured 2026-09-02 on the quota
-	// probe and the session-title helper: X-Stainless-Async is never sent, both
-	// shapes offer the full compression set, and x-client-request-id is attached
-	// only when the base URL is api.anthropic.com, which a request that reached
-	// CPA never is.
+	// probe and the session-title helper: X-Stainless-Async is never sent and
+	// both shapes offer the full compression set. x-client-request-id is
+	// attached only when the client's base URL is api.anthropic.com, so a client
+	// pointed at CPA through ANTHROPIC_BASE_URL sends none while one that reaches
+	// CPA through a transparent proxy still carries the UUID; both are accepted.
 	async := headerValue(headers, "X-Stainless-Async")
 	compression := headerValue(headers, "Accept-Encoding")
 	requestID := headerValue(headers, "X-Client-Request-Id")
@@ -317,7 +318,15 @@ func measuredClaudeCodeHelperHeadersMatch(headers http.Header, cfg *config.Confi
 		_, errRequestID := uuid.Parse(requestID)
 		return errRequestID == nil
 	}
-	return async == "" && compression == "gzip, deflate, br, zstd" && requestID == ""
+	if async != "" || compression != "gzip, deflate, br, zstd" {
+		return false
+	}
+	if requestID != "" {
+		if _, errRequestID := uuid.Parse(requestID); errRequestID != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func measuredClaudeCodeHelperSessionMatches(headers http.Header, payload []byte) bool {
@@ -499,6 +508,7 @@ func plausibleClaudeCodeUserAgent(userAgent string, cfg *config.Config) bool {
 	}
 	candidate, okCandidate := parseClaudeCLIVersion(userAgent)
 	baseline, okBaseline := parseClaudeCLIVersion(defaultClaudeDeviceProfile(cfg).UserAgent)
+	// Patch releases (>= baseline.patch) within the release line preserve native passthrough.
 	return okCandidate && okBaseline && plausibleClaudeCLIVersion(candidate, baseline)
 }
 
