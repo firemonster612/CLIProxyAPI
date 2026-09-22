@@ -84,6 +84,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.POST("/burn-pins", s.mgmt.SetBurnPin)
 		mgmt.DELETE("/burn-pins", s.mgmt.DeleteBurnPin)
 
+		mgmt.GET("/claude/banked-resets", s.mgmt.GetClaudeBankedResets)
+		mgmt.POST("/claude/banked-resets/use", s.mgmt.UseClaudeBankedReset)
+
 		mgmt.GET("/quota/providers", s.mgmt.GetQuotaProviders)
 		mgmt.POST("/quota/fetch", s.mgmt.FetchCredentialQuota)
 		mgmt.POST("/quota/reset", s.mgmt.ResetCredentialQuota)
