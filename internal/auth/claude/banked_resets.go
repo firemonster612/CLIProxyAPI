@@ -50,6 +50,9 @@ func (o *ClaudeAuth) FetchBankedResetStatus(ctx context.Context, accessToken str
 	if errFetch != nil {
 		return nil, errFetch
 	}
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("parse Claude OAuth usage response: body is not valid JSON")
+	}
 	status := gjson.GetBytes(body, "cedar_ember")
 	if !status.Exists() || status.Type == gjson.Null {
 		return json.RawMessage("null"), nil

@@ -48,7 +48,7 @@ func (h *Handler) GetClaudeBankedResets(c *gin.Context) {
 	if !ok {
 		return
 	}
-	status, errFetch := claude.NewClaudeAuth(h.cfg).FetchBankedResetStatus(c.Request.Context(), accessToken)
+	status, errFetch := claude.NewClaudeAuthWithProxyURL(h.cfg, auth.ProxyURL).FetchBankedResetStatus(c.Request.Context(), accessToken)
 	if errFetch != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("failed to fetch banked resets: %v", errFetch)})
 		return
@@ -78,7 +78,7 @@ func (h *Handler) UseClaudeBankedReset(c *gin.Context) {
 	if !ok {
 		return
 	}
-	anthropicAuth := claude.NewClaudeAuth(h.cfg)
+	anthropicAuth := claude.NewClaudeAuthWithProxyURL(h.cfg, auth.ProxyURL)
 	ctx := c.Request.Context()
 
 	grantID := strings.TrimSpace(req.GrantID)
@@ -109,7 +109,7 @@ func (h *Handler) UseClaudeBankedReset(c *gin.Context) {
 
 	quotaReset := false
 	if claim.Result == "reset" && h.authManager != nil {
-		if _, _, errReset := h.authManager.ResetQuota(ctx, auth.ID); errReset != nil {
+		if _, _, errReset := h.authManager.ResetQuota(context.WithoutCancel(ctx), auth.ID); errReset != nil {
 			log.WithError(errReset).Warnf("banked reset claimed but local quota state not cleared for %s", auth.EnsureIndex())
 		} else {
 			quotaReset = true
