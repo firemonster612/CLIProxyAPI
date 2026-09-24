@@ -267,8 +267,6 @@ func measuredClaudeCodeHelperHeadersMatch(headers http.Header, cfg *config.Confi
 	}
 	// Presence is still required: the native SDK always sends these.
 	for _, name := range []string{
-		"X-Stainless-Package-Version",
-		"X-Stainless-Runtime-Version",
 		"X-Stainless-OS",
 		"X-Stainless-Arch",
 	} {
@@ -276,16 +274,11 @@ func measuredClaudeCodeHelperHeadersMatch(headers http.Header, cfg *config.Confi
 			return false
 		}
 	}
-	candidate := ClaudeDeviceProfile{
-		UserAgent:      headerValue(headers, "User-Agent"),
-		PackageVersion: headerValue(headers, "X-Stainless-Package-Version"),
-		RuntimeVersion: headerValue(headers, "X-Stainless-Runtime-Version"),
-	}
-	if version, ok := parseClaudeCLIVersion(candidate.UserAgent); ok {
-		candidate.version = version
-		candidate.hasVersion = true
-	}
-	if !meetsClaudeDeviceProfileBaseline(candidate, profile) {
+	// The CLI version was already vetted by plausibleClaudeCodeUserAgent. The SDK
+	// and Node versions only need to be well formed: a new release can bump
+	// them, and requiring the pinned tuple would reject its helpers.
+	if !claudePackageVersionPattern.MatchString(headerValue(headers, "X-Stainless-Package-Version")) ||
+		!claudeRuntimeVersionPattern.MatchString(headerValue(headers, "X-Stainless-Runtime-Version")) {
 		return false
 	}
 	// Two measured transport envelopes, selected by the configured baseline so
@@ -507,9 +500,11 @@ func plausibleClaudeCodeUserAgent(userAgent string, cfg *config.Config) bool {
 		return false
 	}
 	candidate, okCandidate := parseClaudeCLIVersion(userAgent)
-	baseline, okBaseline := parseClaudeCLIVersion(defaultClaudeDeviceProfile(cfg).UserAgent)
-	// Patch releases (>= baseline.patch) within the release line preserve native passthrough.
-	return okCandidate && okBaseline && plausibleClaudeCLIVersion(candidate, baseline)
+	// The pinned baseline is the floor: clients that have not yet auto-updated to
+	// the latest release are still native.
+	pinned := pinnedClaudeDeviceProfile(cfg)
+	latest := defaultClaudeDeviceProfile(cfg)
+	return okCandidate && pinned.hasVersion && plausibleClaudeCLIVersion(candidate, pinned.version, latest.version)
 }
 
 func parseClaudeCodeUserAgentDetails(userAgent string) (entrypoint, agentSDKVersion string) {

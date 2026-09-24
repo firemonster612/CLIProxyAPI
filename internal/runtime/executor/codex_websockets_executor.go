@@ -64,6 +64,14 @@ func (e *CodexAutoExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.
 	return e.httpExec.HttpRequest(ctx, auth, req)
 }
 
+// FetchModelList lists the models the credential's ChatGPT account can use.
+func (e *CodexAutoExecutor) FetchModelList(ctx context.Context, auth *cliproxyauth.Auth) ([]byte, error) {
+	if e == nil || e.httpExec == nil {
+		return nil, fmt.Errorf("codex auto executor: http executor is nil")
+	}
+	return e.httpExec.FetchModelList(ctx, auth)
+}
+
 func (e *CodexAutoExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	if e == nil || e.httpExec == nil || e.wsExec == nil {
 		return cliproxyexecutor.Response{}, fmt.Errorf("codex auto executor: executor is nil")

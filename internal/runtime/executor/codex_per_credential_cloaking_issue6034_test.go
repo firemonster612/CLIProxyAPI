@@ -86,8 +86,8 @@ func TestCodexPerCredentialDisableCloaking_HTTP_ExplicitFalseOverridesGlobalTrue
 	applyCodexHeadersFromSources(req, auth, "test-token", false, cfg, nil)
 
 	// Since disable-codex-cloaking is explicitly false on the credential, cloaking should be enforced.
-	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
-		t.Errorf("User-Agent = %q, want %q", got, codexUserAgent)
+	if got := req.Header.Get("User-Agent"); got != codexUserAgent() {
+		t.Errorf("User-Agent = %q, want %q", got, codexUserAgent())
 	}
 	if got := req.Header.Get("Originator"); got != codexOriginator {
 		t.Errorf("Originator = %q, want %q", got, codexOriginator)
@@ -145,8 +145,8 @@ func TestCodexPerCredentialDisableCloaking_HTTP_FallbackToGlobal(t *testing.T) {
 		t.Fatalf("http.NewRequest failed: %v", err)
 	}
 	applyCodexHeadersFromSources(req2, authNil, "test-token", false, cfgGlobalFalse, nil)
-	if got := req2.Header.Get("User-Agent"); got != codexUserAgent {
-		t.Errorf("Global false fallback User-Agent = %q, want %q", got, codexUserAgent)
+	if got := req2.Header.Get("User-Agent"); got != codexUserAgent() {
+		t.Errorf("Global false fallback User-Agent = %q, want %q", got, codexUserAgent())
 	}
 }
 
@@ -198,8 +198,8 @@ func TestCodexPerCredentialDisableCloaking_WebSocket_ExplicitFalseOverridesGloba
 
 	headers := applyCodexWebsocketHeaders(context.Background(), nil, auth, "test-token", cfg, true)
 
-	if got := headers.Get("User-Agent"); got != codexUserAgent {
-		t.Errorf("WebSocket User-Agent = %q, want %q", got, codexUserAgent)
+	if got := headers.Get("User-Agent"); got != codexUserAgent() {
+		t.Errorf("WebSocket User-Agent = %q, want %q", got, codexUserAgent())
 	}
 	if got := headers.Get("Originator"); got != codexOriginator {
 		t.Errorf("WebSocket Originator = %q, want %q", got, codexOriginator)
@@ -239,8 +239,8 @@ func TestCodexPerCredentialDisableCloaking_OAuthUnaffectedByAPIKeyOverride(t *te
 	applyCodexHeadersFromSources(req, oauthAuth, "oauth-token", false, cfg, nil)
 
 	// OAuth credential must remain cloaked with official Codex identity
-	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
-		t.Errorf("OAuth User-Agent = %q, want %q", got, codexUserAgent)
+	if got := req.Header.Get("User-Agent"); got != codexUserAgent() {
+		t.Errorf("OAuth User-Agent = %q, want %q", got, codexUserAgent())
 	}
 	if got := req.Header.Get("Originator"); got != codexOriginator {
 		t.Errorf("OAuth Originator = %q, want %q", got, codexOriginator)

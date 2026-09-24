@@ -37,7 +37,12 @@ func resolveIncomingClaudeHeaders(ctx context.Context, incoming http.Header) htt
 
 func detectIncomingClaudeCodeRequest(ctx context.Context, incoming http.Header, payload []byte, countTokens bool, cfg *config.Config) (http.Header, helps.ClaudeCodeRequestDetection) {
 	resolved := resolveIncomingClaudeHeaders(ctx, incoming)
-	return resolved, helps.DetectClaudeCodeRequest(resolved, payload, countTokens, cfg)
+	detection := helps.DetectClaudeCodeRequest(resolved, payload, countTokens, cfg)
+	if detection.Confirmed {
+		// Lets the presented profile follow a release that bumps its SDK.
+		helps.RecordClaudePackageVersion(helps.HeaderValueCaseInsensitive(resolved, "User-Agent"), helps.HeaderValueCaseInsensitive(resolved, "X-Stainless-Package-Version"), cfg)
+	}
+	return resolved, detection
 }
 
 // getWorkloadFromContext extracts workload identifier from the gin request headers.

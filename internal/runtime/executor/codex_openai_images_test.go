@@ -93,8 +93,8 @@ func TestCodexExecutorDirectOpenAIImageGenerationUsesImagesEndpoint(t *testing.T
 	if gotAccept != "application/json" {
 		t.Fatalf("Accept = %q, want application/json", gotAccept)
 	}
-	if gotUA != codexUserAgent {
-		t.Fatalf("User-Agent = %q, want codex default %q", gotUA, codexUserAgent)
+	if gotUA != codexUserAgent() {
+		t.Fatalf("User-Agent = %q, want codex default %q", gotUA, codexUserAgent())
 	}
 	if gotVersion != "0.135.0" {
 		t.Fatalf("Version = %q, want %q", gotVersion, "0.135.0")

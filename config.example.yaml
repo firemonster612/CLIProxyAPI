@@ -717,11 +717,15 @@ nonstream-keepalive-interval: 0
 # shape, so the outgoing fingerprint stays consistent with the advertised version.
 # Other Anthropic-compatible upstreams still forward caller betas verbatim.
 #
-# Default headers for Claude API requests. Update only after measuring a new Claude Code release.
-# Unconfirmed clients use this CLI baseline. Verified native Claude Code CLI, sdk-cli,
-# and VSCode requests preserve their measured entrypoint when the Claude Code version is a
-# patch release in the configured major/minor line at or above this baseline. Older versions
-# and newer major/minor lines fall back to the baseline until measured. In legacy mode,
+# Default headers for Claude API requests. The user-agent version is a floor: CPA polls
+# npm hourly and advances it to the latest published Claude Code release, so new models
+# gated on a recent client work without editing this block. The package version follows
+# the first confirmed native client seen on that release; the runtime version stays as
+# configured. Baselines below 2.1.258 are left untouched so the measured
+# 2.1.220 wire shape stays consistent. Unconfirmed clients use this CLI baseline. Verified
+# native Claude Code CLI, sdk-cli, and VSCode requests preserve their measured entrypoint
+# when the Claude Code version is at or above this baseline and either shares its
+# major/minor line or does not exceed the latest published release. In legacy mode,
 # timeout is a fallback and
 # verified native OS/arch values remain client-supplied. When stabilize-device-profile is
 # enabled, OS/arch are pinned to the values below and cached profiles remain constrained to
@@ -740,6 +744,9 @@ nonstream-keepalive-interval: 0
 # These are used only for file-backed/OAuth Codex requests when the client
 # does not send the header. `user-agent` applies to HTTP and websocket requests;
 # `beta-features` only applies to websocket requests. They do not apply to codex-api-key entries.
+# Without a configured user-agent, CPA presents the latest Codex release published on npm
+# (polled hourly), so models gated on a recent minimal_client_version work on release day.
+# Setting user-agent here pins it and opts out of that tracking.
 # codex-header-defaults:
 #   user-agent: "codex_cli_rs/0.114.0 (Mac OS 14.2.0; x86_64) vscode/1.111.0"
 #   beta-features: "multi_agent"
