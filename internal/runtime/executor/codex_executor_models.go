@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 )
@@ -35,10 +36,15 @@ func (e *CodexExecutor) FetchModelList(ctx context.Context, auth *cliproxyauth.A
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Originator", codexOriginator)
-	req.Header.Set("User-Agent", codexUserAgent())
+	// Same precedence as execution requests, so the account presents one
+	// client identity to ChatGPT.
+	cfgUserAgent, _ := codexHeaderDefaults(e.cfg, auth)
+	ensureHeaderWithConfigPrecedence(req.Header, nil, "User-Agent", cfgUserAgent, codexUserAgent())
 	if accountID, ok := auth.Metadata["account_id"].(string); ok && accountID != "" {
 		req.Header.Set("Chatgpt-Account-Id", accountID)
 	}
+	util.ApplyCustomHeadersFromAttrs(req, auth.Attributes)
+	applyCodexCloakingHeaders(req.Header, e.cfg, auth)
 
 	resp, errDo := helps.NewUtlsHTTPClient(reqCtx, e.cfg, auth, codexModelListTimeout).Do(req)
 	if errDo != nil {

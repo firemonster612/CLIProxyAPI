@@ -53,7 +53,7 @@ func TestPlausibleClaudeCLIVersionAcceptsUpToLatestRelease(t *testing.T) {
 	}
 }
 
-func TestRecordClaudePackageVersionKeepsFirstObservationOnLatestRelease(t *testing.T) {
+func TestRecordClaudePackageVersionIsFlooredAndCarriedForward(t *testing.T) {
 	reset := func() {
 		claudeObservedPackageMu.Lock()
 		claudeObservedPackageRelease, claudeObservedPackageVersion = claudeCLIVersion{}, ""
@@ -65,19 +65,27 @@ func TestRecordClaudePackageVersionKeepsFirstObservationOnLatestRelease(t *testi
 	t.Cleanup(restore)
 	pinned := pinnedClaudeDeviceProfile(nil)
 
-	RecordClaudePackageVersion("claude-cli/2.2.9 (external, cli)", "0.117.0")
-	RecordClaudePackageVersion("claude-cli/2.3.0 (external, cli)", "not-a-version")
+	RecordClaudePackageVersion("claude-cli/2.2.9 (external, cli)", "0.117.0", nil) // not the latest release
+	RecordClaudePackageVersion("claude-cli/2.3.0 (external, cli)", "not-a-version", nil)
+	RecordClaudePackageVersion("claude-cli/2.3.0 (external, cli)", "0.001.0", nil) // below the pinned SDK
 	if got := withLatestClaudeRelease(pinned, "2.3.0"); got.PackageVersion != pinned.PackageVersion {
-		t.Fatalf("PackageVersion = %q, want pinned until a well-formed latest-release client is seen", got.PackageVersion)
+		t.Fatalf("PackageVersion = %q, want pinned until an acceptable observation", got.PackageVersion)
 	}
 
-	RecordClaudePackageVersion("claude-cli/2.3.0 (external, cli)", "0.118.0")
-	RecordClaudePackageVersion("claude-cli/2.3.0 (external, cli)", "9.9.9")
+	RecordClaudePackageVersion("claude-cli/2.3.0 (external, cli)", "0.118.0", nil)
+	RecordClaudePackageVersion("claude-cli/2.3.0 (external, cli)", "9.9.9", nil)
 	got := withLatestClaudeRelease(pinned, "2.3.0")
-	if got.PackageVersion != "0.118.0" {
-		t.Fatalf("PackageVersion = %q, want the first observation 0.118.0", got.PackageVersion)
+	if got.PackageVersion != "0.118.0" || got.RuntimeVersion != pinned.RuntimeVersion {
+		t.Fatalf("tuple = %s/%s, want the first observation 0.118.0 with the pinned runtime", got.PackageVersion, got.RuntimeVersion)
 	}
-	if got.RuntimeVersion != pinned.RuntimeVersion {
-		t.Fatalf("RuntimeVersion = %q, want pinned %q", got.RuntimeVersion, pinned.RuntimeVersion)
+
+	// The next release keeps the learned SDK until one of its clients is seen.
+	misc.ClaudeCodeRelease.SetForTest("2.3.1")
+	if got := withLatestClaudeRelease(pinned, "2.3.1"); got.PackageVersion != "0.118.0" {
+		t.Fatalf("PackageVersion after release = %q, want 0.118.0 carried forward", got.PackageVersion)
+	}
+	RecordClaudePackageVersion("claude-cli/2.3.1 (external, cli)", "0.119.0", nil)
+	if got := withLatestClaudeRelease(pinned, "2.3.1"); got.PackageVersion != "0.119.0" {
+		t.Fatalf("PackageVersion = %q, want 0.119.0 learned for 2.3.1", got.PackageVersion)
 	}
 }

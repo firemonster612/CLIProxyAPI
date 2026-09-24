@@ -40,7 +40,7 @@ func detectIncomingClaudeCodeRequest(ctx context.Context, incoming http.Header, 
 	detection := helps.DetectClaudeCodeRequest(resolved, payload, countTokens, cfg)
 	if detection.Confirmed {
 		// Lets the presented profile follow a release that bumps its SDK.
-		helps.RecordClaudePackageVersion(helps.HeaderValueCaseInsensitive(resolved, "User-Agent"), helps.HeaderValueCaseInsensitive(resolved, "X-Stainless-Package-Version"))
+		helps.RecordClaudePackageVersion(helps.HeaderValueCaseInsensitive(resolved, "User-Agent"), helps.HeaderValueCaseInsensitive(resolved, "X-Stainless-Package-Version"), cfg)
 	}
 	return resolved, detection
 }

@@ -150,17 +150,21 @@ func withLatestClaudeRelease(profile ClaudeDeviceProfile, release string) Claude
 	pinned := profile.version
 	profile.UserAgent = claudeCLIVersionPattern.ReplaceAllString(profile.UserAgent, latestUserAgent)
 	profile.version = latest
-	if packageVersion, seen := observedClaudePackageVersion(latest); seen {
+	packageVersion, observedOn := observedClaudePackageVersion()
+	if packageVersion != "" && observedOn.Compare(latest) <= 0 {
+		// Carried forward from the newest release seen so far, so the SDK
+		// version never steps back when a new release lands.
 		profile.PackageVersion = packageVersion
-	} else if latest.major != pinned.major || latest.minor != pinned.minor {
+	}
+	if observedOn != latest && (latest.major != pinned.major || latest.minor != pinned.minor) {
 		warnUnmeasuredClaudeRelease(latest)
 	}
 	return profile
 }
 
-// The SDK version observed on the latest release. Only one release is tracked
-// and the first observation is kept, so a later caller cannot change it and
-// memory stays bounded.
+// The SDK version observed on the newest Claude Code release seen so far. One
+// slot is kept; it only moves to a newer release, and within a release the
+// first observation is kept so a later caller cannot change it.
 var (
 	claudeObservedPackageMu      sync.RWMutex
 	claudeObservedPackageRelease claudeCLIVersion
@@ -169,8 +173,9 @@ var (
 )
 
 // RecordClaudePackageVersion remembers the SDK version a confirmed native
-// Claude Code client reported, when that client runs the latest release.
-func RecordClaudePackageVersion(userAgent, packageVersion string) {
+// Claude Code client on the latest release reported. Versions below the pinned
+// baseline are ignored.
+func RecordClaudePackageVersion(userAgent, packageVersion string, cfg *config.Config) {
 	version, ok := parseClaudeCLIVersion(userAgent)
 	if !ok || !claudePackageVersionPattern.MatchString(packageVersion) {
 		return
@@ -179,27 +184,27 @@ func RecordClaudePackageVersion(userAgent, packageVersion string) {
 	if !okLatest || version != latest {
 		return
 	}
+	if misc.CompareReleaseVersions(packageVersion, pinnedClaudeDeviceProfile(cfg).PackageVersion) < 0 {
+		return
+	}
 	claudeObservedPackageMu.RLock()
-	known := claudeObservedPackageRelease == version && claudeObservedPackageVersion != ""
+	known := claudeObservedPackageVersion != "" && claudeObservedPackageRelease.Compare(version) >= 0
 	claudeObservedPackageMu.RUnlock()
 	if known {
 		return
 	}
 	claudeObservedPackageMu.Lock()
-	if claudeObservedPackageRelease != version || claudeObservedPackageVersion == "" {
+	if claudeObservedPackageVersion == "" || claudeObservedPackageRelease.Compare(version) < 0 {
 		claudeObservedPackageRelease = version
 		claudeObservedPackageVersion = packageVersion
 	}
 	claudeObservedPackageMu.Unlock()
 }
 
-func observedClaudePackageVersion(release claudeCLIVersion) (string, bool) {
+func observedClaudePackageVersion() (string, claudeCLIVersion) {
 	claudeObservedPackageMu.RLock()
 	defer claudeObservedPackageMu.RUnlock()
-	if claudeObservedPackageRelease != release || claudeObservedPackageVersion == "" {
-		return "", false
-	}
-	return claudeObservedPackageVersion, true
+	return claudeObservedPackageVersion, claudeObservedPackageRelease
 }
 
 func warnUnmeasuredClaudeRelease(version claudeCLIVersion) {
@@ -725,8 +730,8 @@ func ApplyClaudeLegacyDeviceHeaders(r *http.Request, ginHeaders http.Header, cfg
 	}
 
 	if confirmedClaudeCode {
-		// A client on an older release keeps that release's pinned SDK version
-		// rather than the one learned for the latest release.
+		// Legacy mode keeps only measured SDK versions: the pinned one or the one
+		// learned for the latest release. Anything else is replaced.
 		acceptedPackage := func(value string) bool {
 			return value == profile.PackageVersion || value == pinnedClaudeDeviceProfile(cfg).PackageVersion
 		}
