@@ -207,7 +207,7 @@ func (s *Service) Run(ctx context.Context) error {
 
 	s.registerModelRefreshCallback()
 	if registry.RemoteModelUpdatesEnabled() {
-		go s.runClaudeModelDiscovery(ctx)
+		go s.runModelDiscovery(ctx)
 	}
 
 	select {

@@ -61,7 +61,7 @@ func TestRecordClaudePackageVersionKeepsFirstObservationOnLatestRelease(t *testi
 	}
 	reset()
 	t.Cleanup(reset)
-	restore := misc.SetClaudeCodeLatestReleaseForTest("2.3.0")
+	restore := misc.ClaudeCodeRelease.SetForTest("2.3.0")
 	t.Cleanup(restore)
 	pinned := pinnedClaudeDeviceProfile(nil)
 

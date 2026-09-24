@@ -132,7 +132,7 @@ func MapStainlessArch() string {
 // new models behind recent client versions, so presenting only the pinned
 // version would lock clients out of models released after this build.
 func defaultClaudeDeviceProfile(cfg *config.Config) ClaudeDeviceProfile {
-	return withLatestClaudeRelease(pinnedClaudeDeviceProfile(cfg), misc.ClaudeCodeLatestRelease())
+	return withLatestClaudeRelease(pinnedClaudeDeviceProfile(cfg), misc.ClaudeCodeRelease.Latest())
 }
 
 // withLatestClaudeRelease moves profile to release when release is newer.
@@ -175,7 +175,7 @@ func RecordClaudePackageVersion(userAgent, packageVersion string) {
 	if !ok || !claudePackageVersionPattern.MatchString(packageVersion) {
 		return
 	}
-	latest, okLatest := parseClaudeCLIVersion("claude-cli/" + misc.ClaudeCodeLatestRelease())
+	latest, okLatest := parseClaudeCLIVersion("claude-cli/" + misc.ClaudeCodeRelease.Latest())
 	if !okLatest || version != latest {
 		return
 	}

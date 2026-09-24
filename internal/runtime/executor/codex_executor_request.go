@@ -25,13 +25,32 @@ import (
 )
 
 const (
-	codexUserAgent             = "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+	// codexPinnedClientVersion is the measured Codex release; codexUserAgent
+	// advances it to the latest published release (see misc.CodexRelease).
+	codexPinnedClientVersion   = "0.154.0"
 	codexOriginator            = "codex-tui"
 	codexDefaultImageToolModel = "gpt-image-2"
 	codexResponsesLiteHeader   = "X-OpenAI-Internal-Codex-Responses-Lite"
 )
 
 var dataTag = []byte("data:")
+
+// codexUserAgent is the native Codex TUI user agent for the latest published
+// Codex release, falling back to the measured one. ChatGPT gates new models on
+// minimal_client_version, so a fixed version would lock them out.
+func codexUserAgent() string {
+	version := codexClientVersion()
+	return "codex-tui/" + version + " (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; " + version + ")"
+}
+
+// codexClientVersion is the Codex release presented upstream: the latest
+// published release when it is newer than the measured one.
+func codexClientVersion() string {
+	if latest := misc.CodexRelease.Latest(); latest != "" && misc.CompareReleaseVersions(latest, codexPinnedClientVersion) > 0 {
+		return latest
+	}
+	return codexPinnedClientVersion
+}
 
 func translateCodexRequestPair(from, to sdktranslator.Format, model string, originalPayload, payload []byte, stream bool, preserveEmptyThinkingBlocks ...bool) ([]byte, []byte) {
 	isCompat := len(preserveEmptyThinkingBlocks) > 0 && preserveEmptyThinkingBlocks[0]
@@ -362,7 +381,7 @@ func applyCodexHeadersFromSources(r *http.Request, auth *cliproxyauth.Auth, toke
 	misc.EnsureHeader(r.Header, ginHeaders, "X-Openai-Internal-Codex-Responses-Lite", "")
 
 	cfgUserAgent, _ := codexHeaderDefaults(cfg, auth)
-	ensureHeaderWithConfigPrecedence(r.Header, ginHeaders, "User-Agent", cfgUserAgent, codexUserAgent)
+	ensureHeaderWithConfigPrecedence(r.Header, ginHeaders, "User-Agent", cfgUserAgent, codexUserAgent())
 
 	if stream {
 		r.Header.Set("Accept", "text/event-stream")
@@ -413,7 +432,7 @@ func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config, auth *cl
 	if headers == nil || cfg == nil || isCodexCloakingDisabled(cfg, auth) {
 		return
 	}
-	headers.Set("User-Agent", codexUserAgent)
+	headers.Set("User-Agent", codexUserAgent())
 	headers.Set("Originator", codexOriginator)
 }
 
