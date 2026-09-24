@@ -643,23 +643,23 @@ const (
 	claudeCAISModelTextPrefix = "claude-"
 )
 
-// Model-free CAIS envelopes use explicit known-generation allowlists in
-// addition to the structural spine. This is release bookkeeping, not
-// cryptographic verification or the source of cross-provider separation. The
-// two lists deliberately form a Cartesian product. This policy allows the two
-// separately versioned protobuf layers to roll independently; pair-locking would
-// instead drop signed history during a staggered rollout. It accepts combinations
-// not yet seen in a model-free capture, but only when both identifiers are
-// independently observed CAIS generations and the complete model-free spine is
-// present. When Anthropic
-// adds a generation, confirm its complete protobuf tree against captures, then
-// add its envelope version or channel id here. Channel id 11 is intentionally
-// absent because it has only been observed under the legacy 0x12 envelope, never
-// under CAIS.
-var (
-	knownClaudeCAISEnvelopeVersions = [...]uint64{2, 4}
-	knownClaudeCAISChannelIDs       = [...]uint64{16, 17}
-)
+// Model-free CAIS envelopes require, in addition to the structural spine, an
+// envelope version from an explicit allowlist and a channel id at or above
+// minClaudeCAISChannelID. This is release bookkeeping, not cryptographic
+// verification or the source of cross-provider separation. The two checks are
+// independent, so the envelope and channel layers can roll separately without
+// dropping signed history during a staggered rollout.
+//
+// Envelope versions change the protobuf layout: when Anthropic adds one, confirm
+// its complete tree against captures, then add it here. Channel ids advance with
+// each model generation (16 for opus-5/fable-5, 17 for fable-5-1, 18 for
+// opus-5-5) without a layout change, so the channel check is deliberately loose:
+// every id from 16 up to the uint64 maximum is accepted and a new model keeps its
+// signed history on release. Channel id 11 is below the floor because it has only
+// been observed under the legacy 0x12 envelope, never under CAIS.
+var knownClaudeCAISEnvelopeVersions = [...]uint64{2, 4}
+
+const minClaudeCAISChannelID = 16
 
 type claudeCAISUnknownGenerationError struct {
 	identifier string
@@ -970,7 +970,7 @@ func InspectClaudeCAISSignature(rawSignature string) (*ClaudeCAISSignatureInfo, 
 		return nil, fmt.Errorf("invalid Claude CAQS signature: expected block kind \"thinking\" or \"narration\", got %q", info.BlockKind)
 	case !isKnownClaudeCAISIdentifier(knownClaudeCAISEnvelopeVersions[:], info.EnvelopeVersion):
 		return nil, &claudeCAISUnknownGenerationError{identifier: "envelope version", value: info.EnvelopeVersion}
-	case !isKnownClaudeCAISIdentifier(knownClaudeCAISChannelIDs[:], info.ChannelID):
+	case info.ChannelID < minClaudeCAISChannelID:
 		return nil, &claudeCAISUnknownGenerationError{identifier: "channel_id", value: info.ChannelID}
 	}
 

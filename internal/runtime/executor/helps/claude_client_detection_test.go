@@ -563,18 +563,26 @@ func TestDetectClaudeCodeRequestRejectsHelperWithoutPlatformHeaders(t *testing.T
 	}
 }
 
-func TestDetectClaudeCodeRequestRejectsHelperWithForeignSoftwareTuple(t *testing.T) {
-	for name, value := range map[string]string{
-		"X-Stainless-Package-Version": "0.0.1",
-		"X-Stainless-Runtime-Version": "v0.0.1",
-	} {
-		t.Run(name, func(t *testing.T) {
+func TestDetectClaudeCodeRequestHelperSoftwareTupleMustBeWellFormed(t *testing.T) {
+	cases := []struct {
+		name, value string
+		want        bool
+	}{
+		{"X-Stainless-Package-Version", "latest", false},
+		{"X-Stainless-Runtime-Version", "26.3.0", false},
+		// A new release may bump its SDK or Node build; that alone must not
+		// cloak its helpers.
+		{"X-Stainless-Package-Version", "0.118.0", true},
+		{"X-Stainless-Runtime-Version", "v27.0.0", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
 			headers := measuredClaudeCodeHelperHeaders(claudeCodeHelperBetaProfile(true))
-			headers.Set(name, value)
+			headers.Set(tc.name, tc.value)
 
 			detection := DetectClaudeCodeRequest(headers, measuredClaudeCodeMinimalHelperPayload(), false)
-			if detection.HelperProfile {
-				t.Fatalf("detection = %#v, want a foreign %s to disqualify the helper profile", detection, name)
+			if detection.HelperProfile != tc.want {
+				t.Fatalf("HelperProfile = %v, want %v; detection = %#v", detection.HelperProfile, tc.want, detection)
 			}
 		})
 	}

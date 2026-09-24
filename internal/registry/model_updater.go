@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -36,6 +37,16 @@ type modelStore struct {
 var modelsCatalogStore = &modelStore{}
 
 var updaterOnce sync.Once
+
+// remoteModelUpdates reports whether StartModelsUpdater ran, which is how the
+// process opts into remote model metadata (off under --local-model and Home).
+var remoteModelUpdates atomic.Bool
+
+// RemoteModelUpdatesEnabled reports whether this process refreshes model
+// metadata from remote sources.
+func RemoteModelUpdatesEnabled() bool {
+	return remoteModelUpdates.Load()
+}
 
 // ModelRefreshCallback is invoked when startup or periodic model refresh detects changes.
 // changedProviders contains the provider names whose model definitions changed.
@@ -77,6 +88,7 @@ func init() {
 // Safe to call multiple times; only one updater will run.
 func StartModelsUpdater(ctx context.Context) {
 	updaterOnce.Do(func() {
+		remoteModelUpdates.Store(true)
 		go runModelsUpdater(ctx)
 	})
 }

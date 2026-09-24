@@ -206,6 +206,9 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	s.registerModelRefreshCallback()
+	if registry.RemoteModelUpdatesEnabled() {
+		go s.runClaudeModelDiscovery(ctx)
+	}
 
 	select {
 	case <-ctx.Done():

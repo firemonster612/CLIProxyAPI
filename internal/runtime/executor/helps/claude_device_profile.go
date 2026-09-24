@@ -16,7 +16,9 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	homekv "github.com/router-for-me/CLIProxyAPI/v7/internal/home"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -125,7 +127,92 @@ func MapStainlessArch() string {
 	return mapStainlessArch()
 }
 
+// defaultClaudeDeviceProfile is the pinned baseline advanced to the latest
+// published Claude Code release. Claude Code auto-updates, and upstream gates
+// new models behind recent client versions, so presenting only the pinned
+// version would lock clients out of models released after this build.
 func defaultClaudeDeviceProfile(cfg *config.Config) ClaudeDeviceProfile {
+	return withLatestClaudeRelease(pinnedClaudeDeviceProfile(cfg), misc.ClaudeCodeLatestRelease())
+}
+
+// withLatestClaudeRelease moves profile to release when release is newer.
+// Baselines pinned below the 2.1.258 wire split keep their version: an operator
+// pins those to keep the measured 2.1.220 wire shape. A release can bump its
+// bundled SDK, so the SDK version is taken from the first confirmed native
+// client seen on that release; the Node version stays pinned because it varies
+// with each install.
+func withLatestClaudeRelease(profile ClaudeDeviceProfile, release string) ClaudeDeviceProfile {
+	latestUserAgent := "claude-cli/" + release
+	latest, ok := parseClaudeCLIVersion(latestUserAgent)
+	if !ok || !profile.hasVersion || claudeProfileUsesLegacyWire(profile) || latest.Compare(profile.version) <= 0 {
+		return profile
+	}
+	pinned := profile.version
+	profile.UserAgent = claudeCLIVersionPattern.ReplaceAllString(profile.UserAgent, latestUserAgent)
+	profile.version = latest
+	if packageVersion, seen := observedClaudePackageVersion(latest); seen {
+		profile.PackageVersion = packageVersion
+	} else if latest.major != pinned.major || latest.minor != pinned.minor {
+		warnUnmeasuredClaudeRelease(latest)
+	}
+	return profile
+}
+
+// The SDK version observed on the latest release. Only one release is tracked
+// and the first observation is kept, so a later caller cannot change it and
+// memory stays bounded.
+var (
+	claudeObservedPackageMu      sync.RWMutex
+	claudeObservedPackageRelease claudeCLIVersion
+	claudeObservedPackageVersion string
+	claudeUnmeasuredWarned       sync.Map
+)
+
+// RecordClaudePackageVersion remembers the SDK version a confirmed native
+// Claude Code client reported, when that client runs the latest release.
+func RecordClaudePackageVersion(userAgent, packageVersion string) {
+	version, ok := parseClaudeCLIVersion(userAgent)
+	if !ok || !claudePackageVersionPattern.MatchString(packageVersion) {
+		return
+	}
+	latest, okLatest := parseClaudeCLIVersion("claude-cli/" + misc.ClaudeCodeLatestRelease())
+	if !okLatest || version != latest {
+		return
+	}
+	claudeObservedPackageMu.RLock()
+	known := claudeObservedPackageRelease == version && claudeObservedPackageVersion != ""
+	claudeObservedPackageMu.RUnlock()
+	if known {
+		return
+	}
+	claudeObservedPackageMu.Lock()
+	if claudeObservedPackageRelease != version || claudeObservedPackageVersion == "" {
+		claudeObservedPackageRelease = version
+		claudeObservedPackageVersion = packageVersion
+	}
+	claudeObservedPackageMu.Unlock()
+}
+
+func observedClaudePackageVersion(release claudeCLIVersion) (string, bool) {
+	claudeObservedPackageMu.RLock()
+	defer claudeObservedPackageMu.RUnlock()
+	if claudeObservedPackageRelease != release || claudeObservedPackageVersion == "" {
+		return "", false
+	}
+	return claudeObservedPackageVersion, true
+}
+
+func warnUnmeasuredClaudeRelease(version claudeCLIVersion) {
+	if _, warned := claudeUnmeasuredWarned.LoadOrStore(version, struct{}{}); warned {
+		return
+	}
+	log.WithField("version", fmt.Sprintf("%d.%d.%d", version.major, version.minor, version.patch)).
+		Warn("presenting a Claude Code release outside the measured line with the pinned SDK version until a native client on it is seen; update claude-header-defaults if requests are rejected")
+}
+
+// pinnedClaudeDeviceProfile is the baseline from claude-header-defaults or the
+// compiled-in fallback, before any release tracking.
+func pinnedClaudeDeviceProfile(cfg *config.Config) ClaudeDeviceProfile {
 	hdrDefault := func(cfgVal, fallback string) string {
 		if strings.TrimSpace(cfgVal) != "" {
 			return strings.TrimSpace(cfgVal)
@@ -212,13 +299,16 @@ func shouldUpgradeClaudeDeviceProfile(candidate, current ClaudeDeviceProfile) bo
 	return candidate.version.Compare(current.version) > 0
 }
 
-// plausibleClaudeCLIVersion treats the baseline as a floor for patch releases.
-// Claude Code auto-updates in the background; allow newer patch versions in the
-// same major/minor line to preserve native passthrough and prompt caching.
-func plausibleClaudeCLIVersion(candidate, baseline claudeCLIVersion) bool {
-	return candidate.major == baseline.major &&
-		candidate.minor == baseline.minor &&
-		candidate.patch >= baseline.patch
+// plausibleClaudeCLIVersion treats the baseline as a floor. Claude Code
+// auto-updates in the background; allow newer patch versions in the same
+// major/minor line, and any version up to the latest published release, to
+// preserve native passthrough and prompt caching.
+func plausibleClaudeCLIVersion(candidate, baseline, latest claudeCLIVersion) bool {
+	if candidate.Compare(baseline) < 0 {
+		return false
+	}
+	return candidate.Compare(latest) <= 0 ||
+		(candidate.major == baseline.major && candidate.minor == baseline.minor)
 }
 
 func meetsClaudeDeviceProfileBaseline(candidate, baseline ClaudeDeviceProfile) bool {
@@ -635,8 +725,13 @@ func ApplyClaudeLegacyDeviceHeaders(r *http.Request, ginHeaders http.Header, cfg
 	}
 
 	if confirmedClaudeCode {
+		// A client on an older release keeps that release's pinned SDK version
+		// rather than the one learned for the latest release.
+		acceptedPackage := func(value string) bool {
+			return value == profile.PackageVersion || value == pinnedClaudeDeviceProfile(cfg).PackageVersion
+		}
 		miscEnsure("X-Stainless-Runtime-Version", profile.RuntimeVersion, func(value string) bool { return value == profile.RuntimeVersion })
-		miscEnsure("X-Stainless-Package-Version", profile.PackageVersion, func(value string) bool { return value == profile.PackageVersion })
+		miscEnsure("X-Stainless-Package-Version", profile.PackageVersion, acceptedPackage)
 		miscEnsure("X-Stainless-Os", mapStainlessOS(), nil)
 		miscEnsure("X-Stainless-Arch", mapStainlessArch(), nil)
 		if clientUA := strings.TrimSpace(ginHeaders.Get("User-Agent")); plausibleClaudeCodeUserAgent(clientUA, cfg) {
