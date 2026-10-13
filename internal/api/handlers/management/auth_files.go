@@ -937,11 +937,27 @@ func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveUntil; v != nil {
 		result["chatgpt_subscription_active_until"] = v
 	}
+	if v := codexOrganizationTitle(claims.CodexAuthInfo.Organizations); v != "" {
+		result["organization_title"] = v
+	}
 
 	if len(result) == 0 {
 		return nil
 	}
 	return result
+}
+
+// codexOrganizationTitle returns the default organization's title, else the first organization's.
+func codexOrganizationTitle(organizations []codex.Organizations) string {
+	for _, organization := range organizations {
+		if organization.IsDefault {
+			return strings.TrimSpace(organization.Title)
+		}
+	}
+	if len(organizations) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(organizations[0].Title)
 }
 
 func authEmail(auth *coreauth.Auth) string {

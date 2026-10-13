@@ -9,7 +9,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/usagehistory"
 )
+
+const defaultRecentRequestsLimit = 200
+
+// recentRequestHistory is a variable so tests can substitute an isolated history.
+var recentRequestHistory = usagehistory.Default()
 
 type usageQueueRecord []byte
 
@@ -52,4 +58,35 @@ func parseUsageQueueCount(value string) (int, error) {
 		return 0, errors.New("count must be a positive integer")
 	}
 	return count, nil
+}
+
+// GetRecentRequests returns recent usage records newest first without consuming them.
+func (h *Handler) GetRecentRequests(c *gin.Context) {
+	limit, errLimit := parseRecentRequestsLimit(c.Query("limit"))
+	if errLimit != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errLimit.Error()})
+		return
+	}
+
+	requests := []usagehistory.Entry{}
+	if redisqueue.UsageStatisticsEnabled() {
+		requests = recentRequestHistory.Recent(usagehistory.Filter{
+			Provider:  strings.TrimSpace(c.Query("provider")),
+			AuthIndex: strings.TrimSpace(c.Query("auth_index")),
+			Limit:     limit,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"requests": requests})
+}
+
+func parseRecentRequestsLimit(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultRecentRequestsLimit, nil
+	}
+	limit, errLimit := strconv.Atoi(value)
+	if errLimit != nil || limit <= 0 {
+		return 0, errors.New("limit must be a positive integer")
+	}
+	return min(limit, usagehistory.MaxTotal), nil
 }
