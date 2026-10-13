@@ -15,9 +15,22 @@ func codexAuthWithClaims(payload string) *coreauth.Auth {
 func TestExtractCodexIDTokenClaimsOrganizationTitle(t *testing.T) {
 	cases := []struct {
 		name          string
+		accountID     string
 		organizations string
 		want          string
 	}{
+		{
+			name:          "organization matching the account id wins over default",
+			accountID:     "org-1",
+			organizations: `[{"id":"org-1","is_default":false,"title":"Active Team"},{"id":"org-2","is_default":true,"title":"Default Org"}]`,
+			want:          "Active Team",
+		},
+		{
+			name:          "default organization when no organization matches the account id",
+			accountID:     "acct-unknown",
+			organizations: `[{"id":"org-1","is_default":false,"title":"Personal"},{"id":"org-2","is_default":true,"title":"Acme Team"}]`,
+			want:          "Acme Team",
+		},
 		{
 			name:          "default organization wins over first",
 			organizations: `[{"id":"org-1","is_default":false,"title":"Personal"},{"id":"org-2","is_default":true,"title":"Acme Team"}]`,
@@ -35,7 +48,7 @@ func TestExtractCodexIDTokenClaimsOrganizationTitle(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			auth := codexAuthWithClaims(`{"https://api.openai.com/auth":{"chatgpt_plan_type":"team","organizations":` + tc.organizations + `}}`)
+			auth := codexAuthWithClaims(`{"https://api.openai.com/auth":{"chatgpt_account_id":"` + tc.accountID + `","chatgpt_plan_type":"team","organizations":` + tc.organizations + `}}`)
 
 			claims := extractCodexIDTokenClaims(auth)
 

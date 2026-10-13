@@ -49,22 +49,22 @@ func TestGetRecentRequestsReturnsFilteredEntriesNewestFirst(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	want := `{"requests":[` +
-		`{"timestamp":"2026-10-13T12:00:02.000Z","provider":"claude","auth_index":"a","auth_id":"auth-a","model":"newer","failed":true,"status_code":429,"latency_ms":0,"input_tokens":1,"output_tokens":2,"total_tokens":3},` +
-		`{"timestamp":"2026-10-13T12:00:00.000Z","provider":"claude","auth_index":"a","auth_id":"auth-a","model":"older","failed":false,"latency_ms":10,"input_tokens":0,"output_tokens":0,"total_tokens":0}` +
+	want := `{"enabled":true,"requests":[` +
+		`{"timestamp":"2026-10-13T12:00:02.000Z","completed_at":"2026-10-13T12:00:02.000Z","provider":"claude","auth_index":"a","auth_id":"auth-a","model":"newer","failed":true,"status_code":429,"latency_ms":0,"input_tokens":1,"output_tokens":2,"total_tokens":3},` +
+		`{"timestamp":"2026-10-13T12:00:00.000Z","completed_at":"2026-10-13T12:00:00.010Z","provider":"claude","auth_index":"a","auth_id":"auth-a","model":"older","failed":false,"latency_ms":10,"input_tokens":0,"output_tokens":0,"total_tokens":0}` +
 		`]}`
 	if got := rec.Body.String(); got != want {
 		t.Fatalf("body = %s\nwant   %s", got, want)
 	}
 }
 
-func TestGetRecentRequestsReturnsEmptyListWhenStatisticsDisabled(t *testing.T) {
+func TestGetRecentRequestsReportsDisabledStatisticsWithEmptyList(t *testing.T) {
 	withRecentRequestHistory(t, false, usagehistory.Entry{Provider: "claude", AuthIndex: "a"})
 
 	rec := getRecentRequests(t, "")
 
-	if rec.Code != http.StatusOK || rec.Body.String() != `{"requests":[]}` {
-		t.Fatalf("status = %d body = %s, want 200 with empty list", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"enabled":false,"requests":[]}` {
+		t.Fatalf("status = %d body = %s, want 200 with enabled=false and empty list", rec.Code, rec.Body.String())
 	}
 }
 

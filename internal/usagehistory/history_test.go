@@ -52,12 +52,14 @@ func TestAddEvictsOldestEntryPastGlobalBound(t *testing.T) {
 	}
 }
 
-func TestRecentFiltersAndOrdersNewestFirst(t *testing.T) {
+func TestRecentFiltersAndOrdersNewestCompletionFirst(t *testing.T) {
 	h := New()
 	h.Add(Entry{AuthIndex: "a", Provider: "claude", Model: "late-start", Timestamp: baseTime.Add(5 * time.Second)})
 	h.Add(Entry{AuthIndex: "b", Provider: "codex", Model: "codex", Timestamp: baseTime.Add(2 * time.Second)})
 	h.Add(Entry{AuthIndex: "a", Provider: "claude", Model: "early-start", Timestamp: baseTime.Add(1 * time.Second)})
 	h.Add(Entry{AuthIndex: "a", Provider: "claude", Model: "tie-later", Timestamp: baseTime.Add(5 * time.Second)})
+	// Started first but completed last: a long stream must sort by when it finished.
+	h.Add(Entry{AuthIndex: "a", Provider: "claude", Model: "long-stream", Timestamp: baseTime, LatencyMs: 10_000})
 
 	models := func(entries []Entry) string {
 		out := make([]string, len(entries))
@@ -66,13 +68,13 @@ func TestRecentFiltersAndOrdersNewestFirst(t *testing.T) {
 		}
 		return fmt.Sprint(out)
 	}
-	if got, want := models(h.Recent(Filter{})), "[tie-later late-start codex early-start]"; got != want {
+	if got, want := models(h.Recent(Filter{})), "[long-stream tie-later late-start codex early-start]"; got != want {
 		t.Fatalf("all = %s, want %s", got, want)
 	}
 	if got, want := models(h.Recent(Filter{Provider: "CODEX"})), "[codex]"; got != want {
 		t.Fatalf("provider filter = %s, want %s", got, want)
 	}
-	if got, want := models(h.Recent(Filter{Provider: "claude", AuthIndex: "a", Limit: 2})), "[tie-later late-start]"; got != want {
+	if got, want := models(h.Recent(Filter{Provider: "claude", AuthIndex: "a", Limit: 2})), "[long-stream tie-later]"; got != want {
 		t.Fatalf("auth filter with limit = %s, want %s", got, want)
 	}
 }
@@ -99,7 +101,7 @@ func TestEntryFromRecordProjectsSafeFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"timestamp":"2026-10-13T12:00:00.123Z","provider":"claude","auth_index":"idx-1","auth_id":"auth-1","model":"claude-sonnet","alias":"sonnet","response_model":"claude-sonnet-20260101","failed":true,"status_code":429,"latency_ms":1234,"input_tokens":1,"output_tokens":2,"total_tokens":3}`
+	want := `{"timestamp":"2026-10-13T12:00:00.123Z","completed_at":"2026-10-13T12:00:01.357Z","provider":"claude","auth_index":"idx-1","auth_id":"auth-1","model":"claude-sonnet","alias":"sonnet","response_model":"claude-sonnet-20260101","failed":true,"status_code":429,"latency_ms":1234,"input_tokens":1,"output_tokens":2,"total_tokens":3}`
 	if string(payload) != want {
 		t.Fatalf("json = %s\nwant   %s", payload, want)
 	}

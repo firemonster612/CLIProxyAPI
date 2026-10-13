@@ -68,15 +68,16 @@ func (h *Handler) GetRecentRequests(c *gin.Context) {
 		return
 	}
 
+	enabled := redisqueue.UsageStatisticsEnabled()
 	requests := []usagehistory.Entry{}
-	if redisqueue.UsageStatisticsEnabled() {
+	if enabled {
 		requests = recentRequestHistory.Recent(usagehistory.Filter{
 			Provider:  strings.TrimSpace(c.Query("provider")),
 			AuthIndex: strings.TrimSpace(c.Query("auth_index")),
 			Limit:     limit,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"requests": requests})
+	c.JSON(http.StatusOK, gin.H{"enabled": enabled, "requests": requests})
 }
 
 func parseRecentRequestsLimit(value string) (int, error) {

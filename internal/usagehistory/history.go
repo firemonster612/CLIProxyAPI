@@ -42,13 +42,23 @@ type Entry struct {
 	TotalTokens   int64     `json:"total_tokens"`
 }
 
-// MarshalJSON renders the timestamp as RFC3339 UTC with millisecond precision.
+// CompletedAt returns when the request finished: its start time plus latency.
+func (e Entry) CompletedAt() time.Time {
+	return e.Timestamp.Add(time.Duration(e.LatencyMs) * time.Millisecond)
+}
+
+// MarshalJSON renders the start and completion times as RFC3339 UTC with millisecond precision.
 func (e Entry) MarshalJSON() ([]byte, error) {
 	type fields Entry
 	return json.Marshal(struct {
-		Timestamp string `json:"timestamp"`
+		Timestamp   string `json:"timestamp"`
+		CompletedAt string `json:"completed_at"`
 		fields
-	}{Timestamp: e.Timestamp.UTC().Format(timestampLayout), fields: fields(e)})
+	}{
+		Timestamp:   e.Timestamp.UTC().Format(timestampLayout),
+		CompletedAt: e.CompletedAt().UTC().Format(timestampLayout),
+		fields:      fields(e),
+	})
 }
 
 // Filter selects entries returned by Recent. Empty fields match everything.
@@ -143,11 +153,11 @@ func (h *History) removeAt(i int) {
 	}
 }
 
-// Recent returns matching entries newest first, capped at filter.Limit.
+// Recent returns matching entries by newest completion first, capped at filter.Limit.
 func (h *History) Recent(filter Filter) []Entry {
 	h.mu.Lock()
 	matched := make([]Entry, 0, len(h.entries))
-	// Walk newest arrival first so the stable sort keeps arrival order for equal timestamps.
+	// Walk newest arrival first so the stable sort keeps arrival order for equal completion times.
 	for i := len(h.entries) - 1; i >= 0; i-- {
 		entry := h.entries[i]
 		if filter.Provider != "" && !strings.EqualFold(entry.Provider, filter.Provider) {
@@ -161,7 +171,7 @@ func (h *History) Recent(filter Filter) []Entry {
 	h.mu.Unlock()
 
 	sort.SliceStable(matched, func(i, j int) bool {
-		return matched[i].Timestamp.After(matched[j].Timestamp)
+		return matched[i].CompletedAt().After(matched[j].CompletedAt())
 	})
 	if filter.Limit > 0 && len(matched) > filter.Limit {
 		matched = matched[:filter.Limit]

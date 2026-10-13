@@ -937,7 +937,7 @@ func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 	if v := claims.CodexAuthInfo.ChatgptSubscriptionActiveUntil; v != nil {
 		result["chatgpt_subscription_active_until"] = v
 	}
-	if v := codexOrganizationTitle(claims.CodexAuthInfo.Organizations); v != "" {
+	if v := codexOrganizationTitle(claims.CodexAuthInfo.Organizations, claims.CodexAuthInfo.ChatgptAccountID); v != "" {
 		result["organization_title"] = v
 	}
 
@@ -947,8 +947,16 @@ func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 	return result
 }
 
-// codexOrganizationTitle returns the default organization's title, else the first organization's.
-func codexOrganizationTitle(organizations []codex.Organizations) string {
+// codexOrganizationTitle returns the title of the organization matching the
+// credential's ChatGPT account id, else the default organization's, else the first's.
+func codexOrganizationTitle(organizations []codex.Organizations, accountID string) string {
+	if accountID = strings.TrimSpace(accountID); accountID != "" {
+		for _, organization := range organizations {
+			if strings.TrimSpace(organization.ID) == accountID {
+				return strings.TrimSpace(organization.Title)
+			}
+		}
+	}
 	for _, organization := range organizations {
 		if organization.IsDefault {
 			return strings.TrimSpace(organization.Title)
