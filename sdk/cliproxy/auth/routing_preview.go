@@ -83,8 +83,17 @@ type RoutingExclusion struct {
 func (m *Manager) PreviewRouting(provider, model string, now time.Time) (RoutingPreview, error) {
 	providerKey := canonicalSchedulingProvider(provider)
 	model = strings.TrimSpace(model)
-	if providerKey == "" || model == "" {
-		return RoutingPreview{}, &Error{Code: "invalid_request", Message: "provider and model are required", HTTPStatus: http.StatusBadRequest}
+	if providerKey == "" {
+		return RoutingPreview{}, &Error{Code: "invalid_request", Message: "provider is required", HTTPStatus: http.StatusBadRequest}
+	}
+	// Home dispatch decides before any local check, and the manager holds no
+	// local credentials while Home is enabled, so model and credentials are
+	// not required.
+	if m.HomeEnabled() {
+		return unsupportedRoutingPreview(RoutingPreview{Provider: providerKey, Model: model}, routingUnsupportedHomeDispatch), nil
+	}
+	if model == "" {
+		return RoutingPreview{}, &Error{Code: "invalid_request", Message: "model is required", HTTPStatus: http.StatusBadRequest}
 	}
 	pin, hasPin := m.peekBurnPin(providerKey, now)
 	pluginScheduler := m.hasPluginScheduler()
@@ -93,11 +102,10 @@ func (m *Manager) PreviewRouting(provider, model string, now time.Time) (Routing
 	m.mu.RLock()
 	selector := m.selector
 	members := m.providerAuthsLocked(providerKey)
-	pinnedIndex := ""
+	var pinned *Auth
 	if _, okExecutor := m.executorLocked(providerKey); hasPin && okExecutor {
-		pinned := m.auths[pin.AuthID]
-		if m.burnPinSkipReasonLocked(pinned, providerKey, model, authSelectionEligibility{}, registryRef, now) == "" {
-			pinnedIndex = pinned.peekIndex()
+		if auth := m.auths[pin.AuthID]; m.burnPinSkipReasonLocked(auth, providerKey, model, authSelectionEligibility{}, registryRef, now) == "" {
+			pinned = auth.Clone()
 		}
 	}
 	available, excluded := m.routingCandidatesLocked(members, model, registryRef, now)
@@ -105,6 +113,9 @@ func (m *Manager) PreviewRouting(provider, model string, now time.Time) (Routing
 
 	if len(members) == 0 {
 		return RoutingPreview{}, &Error{Code: "provider_not_found", Message: "no credentials for provider " + providerKey, HTTPStatus: http.StatusBadRequest}
+	}
+	if pinned != nil {
+		available, excluded = withPinnedCandidate(available, excluded, pinned)
 	}
 
 	preview := RoutingPreview{Provider: providerKey, Model: model, Supported: true, Excluded: excluded}
@@ -119,13 +130,11 @@ func (m *Manager) PreviewRouting(provider, model string, now time.Time) (Routing
 		preview.Candidates[i] = RoutingCandidate{AuthIndex: auth.peekIndex(), Priority: authPriority(auth)}
 	}
 
-	// Mirror pickNextMixed: Home dispatch, then an eligible burn pin, then a
-	// plugin scheduler, then the configured selector.
+	// Mirror pickNextMixed: Home dispatch (handled above), then an eligible
+	// burn pin, then a plugin scheduler, then the configured selector.
 	switch {
-	case m.HomeEnabled():
-		return unsupportedRoutingPreview(preview, routingUnsupportedHomeDispatch), nil
-	case pinnedIndex != "":
-		preview.ChosenAuthIndex, preview.Reason = pinnedIndex, routingReasonPinned
+	case pinned != nil:
+		preview.ChosenAuthIndex, preview.Reason = pinned.peekIndex(), routingReasonPinned
 		return preview, nil
 	case pluginScheduler:
 		return unsupportedRoutingPreview(preview, routingUnsupportedPluginScheduler), nil
@@ -177,6 +186,27 @@ func unsupportedRoutingPreview(preview RoutingPreview, reason string) RoutingPre
 	return preview
 }
 
+// withPinnedCandidate lists an eligible pinned credential as a candidate. The
+// pin bypasses the priority tier and the selector's own availability pass, so
+// the candidate filters may have excluded it.
+func withPinnedCandidate(available []*Auth, excluded []RoutingExclusion, pinned *Auth) ([]*Auth, []RoutingExclusion) {
+	pinnedIndex := pinned.peekIndex()
+	kept := make([]RoutingExclusion, 0, len(excluded))
+	for _, exclusion := range excluded {
+		if exclusion.AuthIndex != pinnedIndex {
+			kept = append(kept, exclusion)
+		}
+	}
+	for _, auth := range available {
+		if auth.ID == pinned.ID {
+			return available, kept
+		}
+	}
+	available = append(available, pinned)
+	sort.Slice(available, func(i, j int) bool { return available[i].ID < available[j].ID })
+	return available, kept
+}
+
 // peekBurnPin returns the provider's live pin without pruning expired pins.
 func (m *Manager) peekBurnPin(providerKey string, now time.Time) (BurnPin, bool) {
 	m.burnPinMu.RLock()
@@ -202,6 +232,11 @@ func (m *Manager) providerAuthsLocked(providerKey string) []*Auth {
 // availability pass, the highest priority tier, and the selector's own second
 // availability pass on the route model. It returns clones of the survivors,
 // ID-sorted, and the reason every other credential was dropped. m.mu must be held.
+//
+// It duplicates those filters to report a reason for each exclusion. Keep it
+// in step with the candidate loop in pickNextMixedLegacy,
+// availableAuthsForRouteModelWithPriorityMode, and getAvailableAuths as
+// called by ClosestToResetSelector.Pick.
 func (m *Manager) routingCandidatesLocked(members []*Auth, routeModel string, registryRef *registry.ModelRegistry, now time.Time) ([]*Auth, []RoutingExclusion) {
 	var excluded []RoutingExclusion
 	exclude := func(auth *Auth, reason string, retryAt time.Time) {

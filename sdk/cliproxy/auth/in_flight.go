@@ -79,6 +79,7 @@ func (t *inFlightAttempts) snapshot() []InFlightAttempt {
 }
 
 // beginInFlight records an executor call about to dispatch model for auth.
+// requestedModel is the client's model, before aliasing and routing.
 func (m *Manager) beginInFlight(ctx context.Context, kind, provider string, auth *Auth, model, requestedModel string) (finish func()) {
 	return m.inFlight.begin(InFlightAttempt{
 		RequestID:      logging.GetRequestID(ctx),
@@ -101,12 +102,12 @@ func (m *Manager) InFlightAttempts() []InFlightAttempt {
 
 // executeTracked runs a non-stream executor call, listing it as in flight while it runs.
 func (m *Manager) executeTracked(ctx context.Context, executor ProviderExecutor, auth *Auth, provider, routeModel string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
-	defer m.beginInFlight(ctx, inFlightKindGenerate, provider, auth, req.Model, routeModel)()
+	defer m.beginInFlight(ctx, inFlightKindGenerate, provider, auth, req.Model, requestedModelAliasFromOptions(opts, routeModel))()
 	return executor.Execute(ctx, auth, req, opts)
 }
 
 // countTokensTracked runs a token-count executor call, listing it as in flight while it runs.
 func (m *Manager) countTokensTracked(ctx context.Context, executor ProviderExecutor, auth *Auth, provider, routeModel string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
-	defer m.beginInFlight(ctx, inFlightKindCountTokens, provider, auth, req.Model, routeModel)()
+	defer m.beginInFlight(ctx, inFlightKindCountTokens, provider, auth, req.Model, requestedModelAliasFromOptions(opts, routeModel))()
 	return executor.CountTokens(ctx, auth, req, opts)
 }

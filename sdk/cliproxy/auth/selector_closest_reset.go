@@ -247,6 +247,8 @@ func (s *ClosestToResetSelector) rankClosestToReset(available []*Auth, entries m
 // Pick selects the available auth with the lowest weighted time-to-reset.
 func (s *ClosestToResetSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	now := time.Now()
+	// routingCandidatesLocked mirrors this availability pass for the routing
+	// preview; change it with this one.
 	available, err := getAvailableAuths(auths, provider, model, now)
 	if err != nil {
 		return nil, err

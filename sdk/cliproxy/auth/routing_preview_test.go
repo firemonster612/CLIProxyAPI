@@ -163,6 +163,28 @@ func TestPreviewRoutingAgreesWithBurnPin(t *testing.T) {
 	previewThenPick(t, m, "pv-pin-a", routingReasonOnlyAvailable)
 }
 
+func TestPreviewRoutingListsALowerPriorityPinAsTheCandidate(t *testing.T) {
+	m, _ := newPreviewTestManager(t, claudeAuths("pv-pin-low-a", "pv-pin-low-b"))
+	m.mutateTestAuth("pv-pin-low-b", func(a *Auth) { a.Attributes = map[string]string{"priority": "-1"} })
+	if _, err := m.SetBurnPin("pv-pin-low-b", 0); err != nil {
+		t.Fatalf("SetBurnPin() error = %v", err)
+	}
+
+	preview := previewThenPick(t, m, "pv-pin-low-b", routingReasonPinned)
+	for _, excluded := range preview.Excluded {
+		if excluded.AuthIndex == preview.ChosenAuthIndex {
+			t.Fatalf("pinned credential is excluded: %+v", excluded)
+		}
+	}
+	listed := false
+	for _, candidate := range preview.Candidates {
+		listed = listed || candidate.AuthIndex == preview.ChosenAuthIndex
+	}
+	if !listed || len(preview.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want both credentials including the pin", preview.Candidates)
+	}
+}
+
 func TestPreviewRoutingReportsOnlyAndNoneAvailable(t *testing.T) {
 	m, _ := newPreviewTestManager(t, claudeAuths("pv-one-a", "pv-one-b"))
 	m.mutateTestAuth("pv-one-b", func(a *Auth) { a.Disabled = true })

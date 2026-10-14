@@ -551,6 +551,7 @@ func (m *Manager) availableAuthsForRouteModelAcrossPriorities(auths []*Auth, pro
 	return m.availableAuthsForRouteModelWithPriorityMode(auths, provider, routeModel, now, true)
 }
 
+// routingCandidatesLocked mirrors this filter for the routing preview; change it with this one.
 func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, provider, routeModel string, now time.Time, allPriorities bool) ([]*Auth, error) {
 	if len(auths) == 0 {
 		return nil, &Error{Code: "auth_not_found", Message: "no auth candidates"}
@@ -2075,6 +2076,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		}
 	}
 	registryRef := registry.GetGlobalRegistry()
+	// routingCandidatesLocked mirrors these filters for the routing preview; change it with them.
 	for _, candidate := range m.auths {
 		if candidate == nil || candidate.Disabled {
 			continue

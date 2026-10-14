@@ -4,20 +4,27 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"testing/synctest"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
-const inFlightTestModel = "in-flight-test-model"
+const (
+	inFlightTestModel = "in-flight-test-model"
+	// inFlightTestClientModel is the model the client asked for before routing.
+	inFlightTestClientModel = "in-flight-client-alias"
+)
 
 // blockingExecutor parks each call until the test releases it, so the test
-// observes the attempt while the executor runs.
+// observes the attempt while the executor runs. ExecuteStream streams chunks,
+// or with failStream fails with the error the test releases.
 type blockingExecutor struct {
-	started chan struct{}
-	release chan error
-	chunks  chan cliproxyexecutor.StreamChunk
+	started    chan struct{}
+	release    chan error
+	chunks     chan cliproxyexecutor.StreamChunk
+	failStream bool
 }
 
 func newBlockingExecutor() *blockingExecutor {
@@ -42,6 +49,9 @@ func (e *blockingExecutor) Execute(ctx context.Context, _ *Auth, _ cliproxyexecu
 
 func (e *blockingExecutor) ExecuteStream(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	e.started <- struct{}{}
+	if e.failStream {
+		return nil, <-e.release
+	}
 	return &cliproxyexecutor.StreamResult{Chunks: e.chunks}, nil
 }
 
@@ -75,6 +85,12 @@ func inFlightTestContext() (context.Context, context.CancelFunc) {
 
 var inFlightTestRequest = cliproxyexecutor.Request{Model: inFlightTestModel, Payload: []byte(`{}`)}
 
+func inFlightTestOptions() cliproxyexecutor.Options {
+	return cliproxyexecutor.Options{Metadata: map[string]any{cliproxyexecutor.RequestedModelMetadataKey: inFlightTestClientModel}}
+}
+
+var inFlightTestInvalidRequest = &Error{Code: "invalid_request", Message: "bad", HTTPStatus: http.StatusBadRequest}
+
 func requireOneAttempt(t *testing.T, m *Manager, authIndex, kind string) {
 	t.Helper()
 	attempts := m.InFlightAttempts()
@@ -83,8 +99,8 @@ func requireOneAttempt(t *testing.T, m *Manager, authIndex, kind string) {
 	}
 	got := attempts[0]
 	if got.AttemptID == "" || got.RequestID != "8a1b2c3d" || got.Provider != "claude" || got.AuthIndex != authIndex ||
-		got.Model != inFlightTestModel || got.RequestedModel != inFlightTestModel || got.Kind != kind || got.StartedAt.IsZero() {
-		t.Fatalf("in-flight attempt = %+v, want request 8a1b2c3d on claude %s %s %s", got, authIndex, inFlightTestModel, kind)
+		got.Model != inFlightTestModel || got.RequestedModel != inFlightTestClientModel || got.Kind != kind || got.StartedAt.IsZero() {
+		t.Fatalf("in-flight attempt = %+v, want request 8a1b2c3d on claude %s %s (asked for %s) %s", got, authIndex, inFlightTestModel, inFlightTestClientModel, kind)
 	}
 }
 
@@ -102,9 +118,7 @@ func TestInFlightAttemptsTrackNonStreamCalls(t *testing.T) {
 		finish func(e *blockingExecutor, cancel context.CancelFunc)
 	}{
 		{name: "success", finish: func(e *blockingExecutor, _ context.CancelFunc) { e.release <- nil }},
-		{name: "error", finish: func(e *blockingExecutor, _ context.CancelFunc) {
-			e.release <- &Error{Code: "invalid_request", Message: "bad", HTTPStatus: http.StatusBadRequest}
-		}},
+		{name: "error", finish: func(e *blockingExecutor, _ context.CancelFunc) { e.release <- inFlightTestInvalidRequest }},
 		{name: "cancel", finish: func(_ *blockingExecutor, cancel context.CancelFunc) { cancel() }},
 		{name: "count tokens", count: true, finish: func(e *blockingExecutor, _ context.CancelFunc) { e.release <- nil }},
 	} {
@@ -118,10 +132,10 @@ func TestInFlightAttemptsTrackNonStreamCalls(t *testing.T) {
 			go func() {
 				defer close(done)
 				if tc.count {
-					_, _ = m.ExecuteCount(ctx, []string{"claude"}, inFlightTestRequest, cliproxyexecutor.Options{})
+					_, _ = m.ExecuteCount(ctx, []string{"claude"}, inFlightTestRequest, inFlightTestOptions())
 					return
 				}
-				_, _ = m.Execute(ctx, []string{"claude"}, inFlightTestRequest, cliproxyexecutor.Options{})
+				_, _ = m.Execute(ctx, []string{"claude"}, inFlightTestRequest, inFlightTestOptions())
 			}()
 			<-executor.started
 			kind := inFlightKindGenerate
@@ -143,41 +157,82 @@ func TestInFlightAttemptsTrackStreamsUntilTheyEnd(t *testing.T) {
 		cancel bool
 	}{
 		{name: "stream end"},
-		{name: "cancel"},
+		{name: "cancel while upstream is idle", cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				executor := newBlockingExecutor()
+				m, authIndex := newInFlightTestManager(t, executor)
+				ctx, cancel := inFlightTestContext()
+				defer cancel()
+
+				type started struct {
+					result *cliproxyexecutor.StreamResult
+					err    error
+				}
+				startedCh := make(chan started)
+				go func() {
+					result, err := m.ExecuteStream(ctx, []string{"claude"}, inFlightTestRequest, inFlightTestOptions())
+					startedCh <- started{result, err}
+				}()
+				<-executor.started
+				executor.chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("first")}
+				start := <-startedCh
+				if start.err != nil {
+					t.Fatalf("ExecuteStream() error = %v", start.err)
+				}
+				// Startup returned, but the stream is still open.
+				requireOneAttempt(t, m, authIndex, inFlightKindStream)
+				if chunk := <-start.result.Chunks; string(chunk.Payload) != "first" {
+					t.Fatalf("first chunk = %q", chunk.Payload)
+				}
+				requireOneAttempt(t, m, authIndex, inFlightKindStream)
+
+				if tc.cancel {
+					// The upstream stays open and sends nothing, so only
+					// cancellation can end the attempt.
+					cancel()
+					synctest.Wait()
+					requireNoAttempts(t, m)
+				}
+				close(executor.chunks)
+				for range start.result.Chunks {
+				}
+				requireNoAttempts(t, m)
+			})
+		})
+	}
+}
+
+func TestInFlightAttemptsEndWhenStreamStartFails(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		failStream bool
+	}{
+		{name: "execute error", failStream: true},
+		{name: "bootstrap error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			executor := newBlockingExecutor()
+			executor.failStream = tc.failStream
 			m, authIndex := newInFlightTestManager(t, executor)
 			ctx, cancel := inFlightTestContext()
 			defer cancel()
 
-			type started struct {
-				result *cliproxyexecutor.StreamResult
-				err    error
-			}
-			startedCh := make(chan started)
+			errCh := make(chan error)
 			go func() {
-				result, err := m.ExecuteStream(ctx, []string{"claude"}, inFlightTestRequest, cliproxyexecutor.Options{})
-				startedCh <- started{result, err}
+				_, err := m.ExecuteStream(ctx, []string{"claude"}, inFlightTestRequest, inFlightTestOptions())
+				errCh <- err
 			}()
 			<-executor.started
-			executor.chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("first")}
-			start := <-startedCh
-			if start.err != nil {
-				t.Fatalf("ExecuteStream() error = %v", start.err)
-			}
-			// Startup returned, but the stream is still open.
 			requireOneAttempt(t, m, authIndex, inFlightKindStream)
-			if chunk := <-start.result.Chunks; string(chunk.Payload) != "first" {
-				t.Fatalf("first chunk = %q", chunk.Payload)
+			if tc.failStream {
+				executor.release <- inFlightTestInvalidRequest
+			} else {
+				executor.chunks <- cliproxyexecutor.StreamChunk{Err: inFlightTestInvalidRequest}
 			}
-			requireOneAttempt(t, m, authIndex, inFlightKindStream)
-
-			if tc.cancel {
-				cancel()
-			}
-			close(executor.chunks)
-			for range start.result.Chunks {
+			if err := <-errCh; err == nil {
+				t.Fatal("ExecuteStream() error = nil, want the upstream failure")
 			}
 			requireNoAttempts(t, m)
 		})

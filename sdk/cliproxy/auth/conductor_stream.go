@@ -121,13 +121,19 @@ func readStreamBootstrap(ctx context.Context, ch <-chan cliproxyexecutor.StreamC
 }
 
 // wrapStreamResult forwards a started stream. finishAttempt ends the attempt's
-// in-flight entry once the stream terminates, before out closes.
+// in-flight entry once the stream terminates, before out closes, or once ctx
+// is cancelled: forwarding only notices cancellation on the next upstream
+// chunk, which an idle upstream may never send.
 func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, resultModel, routeModel string, headers http.Header, buffered []cliproxyexecutor.StreamChunk, remaining <-chan cliproxyexecutor.StreamChunk, aliasResult OAuthModelAliasResult, ephemeralResult bool, opts cliproxyexecutor.Options, finishAttempt func()) *cliproxyexecutor.StreamResult {
 	out := make(chan cliproxyexecutor.StreamChunk)
 	streamStart := time.Now()
 	go func() {
 		defer close(out)
 		defer finishAttempt()
+		if ctx != nil {
+			stopFinishOnCancel := context.AfterFunc(ctx, finishAttempt)
+			defer stopFinishOnCancel()
+		}
 		var failed bool
 		forward := true
 		var rewriter *StreamRewriter
@@ -213,6 +219,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		return nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
 	}
 	ctx = contextWithRequestedModelAlias(ctx, opts, routeModel)
+	requestedModel := requestedModelAliasFromOptions(opts, routeModel)
 	var lastErr error
 	var upstreamErr error
 	didRefreshOnUnauthorized := false
@@ -222,7 +229,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 	defer func() { finishAttempt() }()
 	restartAttempt := func(ctx context.Context, model string) {
 		finishAttempt()
-		finishAttempt = m.beginInFlight(ctx, inFlightKindStream, provider, auth, model, routeModel)
+		finishAttempt = m.beginInFlight(ctx, inFlightKindStream, provider, auth, model, requestedModel)
 	}
 	for idx, execModel := range execModels {
 		ctx = newUpstreamAttemptContext(ctx)

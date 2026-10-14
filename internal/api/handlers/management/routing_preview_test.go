@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/usagehistory"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -41,6 +42,26 @@ func TestGetRoutingPreviewRejectsMissingOrUnknownProvider(t *testing.T) {
 	for _, query := range []string{"", "?model=preview-common", "?provider=codex&model=preview-common", "?provider=codex"} {
 		if rec := getRoutingPreview(t, handler, query); rec.Code != http.StatusBadRequest {
 			t.Fatalf("%q: status = %d body = %s, want 400", query, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestGetRoutingPreviewReportsHomeDispatchWithoutLocalCredentials(t *testing.T) {
+	withRecentRequestHistory(t, true)
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.SetConfig(&config.Config{Home: config.HomeConfig{Enabled: true}})
+	handler := &Handler{authManager: manager}
+	for _, query := range []string{"?provider=claude", "?provider=claude&model=preview-common"} {
+		rec := getRoutingPreview(t, handler, query)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%q: status = %d body = %s, want 200", query, rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%q: decode: %v", query, err)
+		}
+		if body["supported"] != false || body["unsupported_reason"] != "home_dispatch" || body["chosen_auth_index"] != nil {
+			t.Fatalf("%q: body = %v, want unsupported home_dispatch with a null choice", query, body)
 		}
 	}
 }

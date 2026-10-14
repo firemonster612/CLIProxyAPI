@@ -57,7 +57,8 @@ func (h *Handler) GetRoutingPreview(c *gin.Context) {
 		return
 	}
 	model, modelSource := h.routingPreviewModel(provider, strings.TrimSpace(c.Query("model")))
-	if model == "" {
+	// Under Home dispatch the preview is unsupported whatever the model.
+	if model == "" && !h.authManager.HomeEnabled() {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no model given or known for provider " + provider})
 		return
 	}
