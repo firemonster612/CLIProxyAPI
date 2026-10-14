@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
@@ -77,7 +78,35 @@ func (h *Handler) GetRecentRequests(c *gin.Context) {
 			Limit:     limit,
 		})
 	}
+	var apiKeys []string
+	if h != nil && h.cfg != nil {
+		apiKeys = h.cfg.APIKeys
+	}
+	labelClientKeys(requests, apiKeys)
 	c.JSON(http.StatusOK, gin.H{"enabled": enabled, "requests": requests})
+}
+
+// labelClientKeys names each entry's client key by its 1-based position in the
+// configured keys, matched by fingerprint, or "Key ?" when no configured key matches.
+func labelClientKeys(entries []usagehistory.Entry, apiKeys []string) {
+	labels := make(map[string]string, len(apiKeys))
+	for i, key := range apiKeys {
+		fingerprint := usagehistory.Fingerprint(strings.TrimSpace(key))
+		if _, seen := labels[fingerprint]; fingerprint != "" && !seen {
+			labels[fingerprint] = "Key #" + strconv.Itoa(i+1)
+		}
+	}
+	for i := range entries {
+		fingerprint := entries[i].ClientKeyFingerprint
+		if fingerprint == "" {
+			continue
+		}
+		if label, ok := labels[fingerprint]; ok {
+			entries[i].ClientKeyLabel = label
+		} else {
+			entries[i].ClientKeyLabel = "Key ?"
+		}
+	}
 }
 
 func parseRecentRequestsLimit(value string) (int, error) {
@@ -90,4 +119,57 @@ func parseRecentRequestsLimit(value string) (int, error) {
 		return 0, errors.New("limit must be a positive integer")
 	}
 	return min(limit, usagehistory.MaxTotal), nil
+}
+
+// maxInFlightRequests caps the attempts one /in-flight-requests response lists.
+const maxInFlightRequests = 500
+
+type inFlightRequest struct {
+	AttemptID      string `json:"attempt_id"`
+	RequestID      string `json:"request_id"`
+	Provider       string `json:"provider"`
+	AuthIndex      string `json:"auth_index"`
+	Model          string `json:"model"`
+	RequestedModel string `json:"requested_model"`
+	Kind           string `json:"kind"`
+	StartedAt      string `json:"started_at"`
+}
+
+// GetInFlightRequests lists executor attempts currently running, oldest first.
+func (h *Handler) GetInFlightRequests(c *gin.Context) {
+	provider := strings.TrimSpace(c.Query("provider"))
+	authIndex := strings.TrimSpace(c.Query("auth_index"))
+	observedAt := time.Now()
+
+	requests := []inFlightRequest{}
+	truncated := false
+	if h != nil && h.authManager != nil {
+		for _, attempt := range h.authManager.InFlightAttempts() {
+			if provider != "" && !strings.EqualFold(attempt.Provider, provider) {
+				continue
+			}
+			if authIndex != "" && attempt.AuthIndex != authIndex {
+				continue
+			}
+			if len(requests) == maxInFlightRequests {
+				truncated = true
+				break
+			}
+			requests = append(requests, inFlightRequest{
+				AttemptID:      attempt.AttemptID,
+				RequestID:      attempt.RequestID,
+				Provider:       attempt.Provider,
+				AuthIndex:      attempt.AuthIndex,
+				Model:          attempt.Model,
+				RequestedModel: attempt.RequestedModel,
+				Kind:           attempt.Kind,
+				StartedAt:      attempt.StartedAt.UTC().Format(usagehistory.TimestampLayout),
+			})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"observed_at": observedAt.UTC().Format(usagehistory.TimestampLayout),
+		"truncated":   truncated,
+		"requests":    requests,
+	})
 }

@@ -313,23 +313,7 @@ func (m *Manager) burnPinnedPick(ctx context.Context, providers []string, model 
 		}
 		m.mu.RLock()
 		selected := m.auths[pin.AuthID]
-		reason := ""
-		switch {
-		case selected == nil:
-			reason = "auth_missing"
-		case selected.Disabled:
-			reason = "auth_disabled"
-		case executorKeyFromAuth(selected) != providerKey:
-			reason = "provider_mismatch"
-		case !eligibility.allows(selected):
-			reason = "ineligible"
-		case !m.authSupportsRouteModel(registryRef, selected, model):
-			reason = "model_unsupported"
-		default:
-			if blocked, _, _ := isAuthBlockedForModel(selected, model, now); blocked {
-				reason = "cooling_down"
-			}
-		}
+		reason := m.burnPinSkipReasonLocked(selected, providerKey, model, eligibility, registryRef, now)
 		var authCopy *Auth
 		if reason == "" {
 			authCopy = selected.Clone()
@@ -353,4 +337,25 @@ func (m *Manager) burnPinnedPick(ctx context.Context, providers []string, model 
 		return authCopy, executor, providerKey
 	}
 	return nil, nil, ""
+}
+
+// burnPinSkipReasonLocked reports why the pinned credential cannot serve a
+// request for model right now, or "" when it can. m.mu must be held.
+func (m *Manager) burnPinSkipReasonLocked(selected *Auth, providerKey, model string, eligibility authSelectionEligibility, registryRef *registry.ModelRegistry, now time.Time) string {
+	switch {
+	case selected == nil:
+		return "auth_missing"
+	case selected.Disabled:
+		return "auth_disabled"
+	case executorKeyFromAuth(selected) != providerKey:
+		return "provider_mismatch"
+	case !eligibility.allows(selected):
+		return "ineligible"
+	case !m.authSupportsRouteModel(registryRef, selected, model):
+		return "model_unsupported"
+	}
+	if blocked, _, _ := isAuthBlockedForModel(selected, model, now); blocked {
+		return "cooling_down"
+	}
+	return ""
 }

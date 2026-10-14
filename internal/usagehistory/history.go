@@ -5,12 +5,15 @@ package usagehistory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
@@ -22,10 +25,17 @@ const (
 	MaxTotal = 2000
 )
 
-const timestampLayout = "2006-01-02T15:04:05.000Z07:00"
+// TimestampLayout renders management API times as RFC3339 with millisecond precision.
+const TimestampLayout = "2006-01-02T15:04:05.000Z07:00"
+
+const (
+	fingerprintHexLength = 10
+	maxUserAgentLength   = 120
+)
 
 // Entry is the management-safe projection of a usage record. It deliberately
-// omits API keys, token hashes, client metadata, session IDs and bodies.
+// omits API keys, token hashes, raw session IDs, forwarded headers and bodies;
+// the client key and session appear only as fingerprints.
 type Entry struct {
 	Timestamp     time.Time `json:"-"`
 	Provider      string    `json:"provider"`
@@ -40,6 +50,25 @@ type Entry struct {
 	InputTokens   int64     `json:"input_tokens"`
 	OutputTokens  int64     `json:"output_tokens"`
 	TotalTokens   int64     `json:"total_tokens"`
+	// RequestID is the logging ID of the downstream HTTP request, shared by its retries.
+	RequestID string `json:"request_id,omitempty"`
+	// ClientKeyLabel names the configured client key; the management handler fills it.
+	ClientKeyLabel       string `json:"client_key_label,omitempty"`
+	ClientKeyFingerprint string `json:"client_key_fingerprint,omitempty"`
+	UserAgent            string `json:"user_agent,omitempty"`
+	// ClientIP is the peer address the proxy saw, which is a reverse proxy's when one fronts it.
+	ClientIP           string `json:"client_ip,omitempty"`
+	SessionFingerprint string `json:"session_fingerprint,omitempty"`
+}
+
+// Fingerprint returns a short, stable, non-reversible identifier for a secret
+// or client-supplied value, or "" for an empty value.
+func Fingerprint(value string) string {
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:fingerprintHexLength]
 }
 
 // CompletedAt returns when the request finished: its start time plus latency.
@@ -55,8 +84,8 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		CompletedAt string `json:"completed_at"`
 		fields
 	}{
-		Timestamp:   e.Timestamp.UTC().Format(timestampLayout),
-		CompletedAt: e.CompletedAt().UTC().Format(timestampLayout),
+		Timestamp:   e.Timestamp.UTC().Format(TimestampLayout),
+		CompletedAt: e.CompletedAt().UTC().Format(TimestampLayout),
 		fields:      fields(e),
 	})
 }
@@ -91,14 +120,14 @@ func Default() *History { return defaultHistory }
 
 type plugin struct{}
 
-func (plugin) HandleUsage(_ context.Context, record coreusage.Record) {
+func (plugin) HandleUsage(ctx context.Context, record coreusage.Record) {
 	if !redisqueue.UsageStatisticsEnabled() {
 		return
 	}
-	defaultHistory.Add(entryFromRecord(record, time.Now()))
+	defaultHistory.Add(entryFromRecord(ctx, record, time.Now()))
 }
 
-func entryFromRecord(record coreusage.Record, now time.Time) Entry {
+func entryFromRecord(ctx context.Context, record coreusage.Record, now time.Time) Entry {
 	timestamp := record.RequestedAt
 	if timestamp.IsZero() {
 		timestamp = now
@@ -120,7 +149,21 @@ func entryFromRecord(record coreusage.Record, now time.Time) Entry {
 	if record.Failed && record.Fail.StatusCode > 0 {
 		entry.StatusCode = record.Fail.StatusCode
 	}
+	client := logging.GetClientRequestMetadata(ctx)
+	entry.RequestID = logging.GetRequestID(ctx)
+	entry.ClientKeyFingerprint = Fingerprint(strings.TrimSpace(record.APIKey))
+	entry.UserAgent = truncateRunes(strings.TrimSpace(client.UserAgent), maxUserAgentLength)
+	entry.ClientIP = strings.TrimSpace(client.ClientIP)
+	entry.SessionFingerprint = Fingerprint(strings.TrimSpace(record.SessionID))
 	return entry
+}
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 // Add appends an entry, evicting the oldest entry of the same auth past

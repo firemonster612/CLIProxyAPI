@@ -167,6 +167,8 @@ type Manager struct {
 	// while active and available; see burn_pin.go.
 	burnPins  map[string]BurnPin
 	burnPinMu sync.RWMutex
+	// inFlight lists executor calls currently running; see in_flight.go.
+	inFlight inFlightAttempts
 
 	// providerOffsets tracks per-model provider rotation state for multi-provider routing.
 	providerOffsets             map[string]int

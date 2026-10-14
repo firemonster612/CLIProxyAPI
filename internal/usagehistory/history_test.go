@@ -1,11 +1,14 @@
 package usagehistory
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
@@ -96,19 +99,32 @@ func TestEntryFromRecordProjectsSafeFields(t *testing.T) {
 		Fail:              coreusage.Failure{StatusCode: 429, Body: "body-secret"},
 		Detail:            coreusage.Detail{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
 	}
+	ctx := logging.WithRequestID(context.Background(), "8a1b2c3d")
+	ctx = logging.WithClientRequestMetadata(ctx, logging.ClientRequestMetadata{
+		ClientIP:      "10.0.0.7",
+		XForwardedFor: "203.0.113.9",
+		UserAgent:     "claude-cli/2.1 " + strings.Repeat("x", 200),
+		SessionID:     "session-secret",
+	})
 
-	payload, err := json.Marshal(entryFromRecord(record, baseTime))
+	payload, err := json.Marshal(entryFromRecord(ctx, record, baseTime))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"timestamp":"2026-10-13T12:00:00.123Z","completed_at":"2026-10-13T12:00:01.357Z","provider":"claude","auth_index":"idx-1","auth_id":"auth-1","model":"claude-sonnet","alias":"sonnet","response_model":"claude-sonnet-20260101","failed":true,"status_code":429,"latency_ms":1234,"input_tokens":1,"output_tokens":2,"total_tokens":3}`
+	want := `{"timestamp":"2026-10-13T12:00:00.123Z","completed_at":"2026-10-13T12:00:01.357Z","provider":"claude","auth_index":"idx-1","auth_id":"auth-1","model":"claude-sonnet","alias":"sonnet","response_model":"claude-sonnet-20260101","failed":true,"status_code":429,"latency_ms":1234,"input_tokens":1,"output_tokens":2,"total_tokens":3,` +
+		`"request_id":"8a1b2c3d","client_key_fingerprint":"746b4ad1ca","user_agent":"claude-cli/2.1 ` + strings.Repeat("x", 105) + `","client_ip":"10.0.0.7","session_fingerprint":"135fa7d671"}`
 	if string(payload) != want {
 		t.Fatalf("json = %s\nwant   %s", payload, want)
+	}
+	for _, secret := range []string{"sk-secret", "hash-secret", "session-secret", "body-secret", "203.0.113.9"} {
+		if strings.Contains(string(payload), secret) {
+			t.Fatalf("json leaks %q: %s", secret, payload)
+		}
 	}
 }
 
 func TestEntryFromRecordOmitsStatusForSuccessAndDefaultsTimestamp(t *testing.T) {
-	entry := entryFromRecord(coreusage.Record{Provider: "codex", Fail: coreusage.Failure{StatusCode: 200}}, baseTime)
+	entry := entryFromRecord(context.Background(), coreusage.Record{Provider: "codex", Fail: coreusage.Failure{StatusCode: 200}}, baseTime)
 	if entry.StatusCode != 0 {
 		t.Fatalf("status_code = %d, want omitted for successful record", entry.StatusCode)
 	}

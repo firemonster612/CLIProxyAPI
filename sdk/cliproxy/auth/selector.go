@@ -619,7 +619,7 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 		return nil, err
 	}
 	available = preferCodexWebsocketAuths(ctx, provider, available)
-	key := provider + ":" + canonicalModelKey(model)
+	key := roundRobinKey(provider, model)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.lastPicked == nil {
@@ -634,6 +634,19 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 	picked := available[successorIndex(available, s.lastPicked[key])]
 	s.lastPicked[key] = picked.ID
 	return picked, nil
+}
+
+func roundRobinKey(provider, model string) string {
+	return provider + ":" + canonicalModelKey(model)
+}
+
+// peekNext returns the candidate Pick would choose from available, which must
+// be ID-sorted, without advancing the rotation.
+func (s *RoundRobinSelector) peekNext(provider, model string, available []*Auth) *Auth {
+	s.mu.Lock()
+	lastID := s.lastPicked[roundRobinKey(provider, model)]
+	s.mu.Unlock()
+	return available[successorIndex(available, lastID)]
 }
 
 // successorIndex returns the index of the first candidate ordered after lastID, wrapping to
@@ -830,7 +843,7 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 	if hasUnauthorizedAuthFailure(auth) {
 		return true, blockReasonOther, time.Time{}
 	}
-	if exp, ok := auth.AccessTokenExpirationTime(); ok && !exp.IsZero() && !exp.After(now) {
+	if accessTokenExpired(auth, now) {
 		return true, blockReasonOther, time.Time{}
 	}
 	if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" && auth.Quota.NextRecoverAt.After(now) {
@@ -880,6 +893,11 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 		quotaExceeded = false
 	}
 	return availabilityBlock(auth.Unavailable, quotaExceeded, auth.NextRetryAfter, auth.Quota.NextRecoverAt, now)
+}
+
+func accessTokenExpired(auth *Auth, now time.Time) bool {
+	exp, ok := auth.AccessTokenExpirationTime()
+	return ok && !exp.IsZero() && !exp.After(now)
 }
 
 func availabilityBlock(unavailable, quotaExceeded bool, nextRetryAfter, nextRecoverAt, now time.Time) (bool, blockReason, time.Time) {
