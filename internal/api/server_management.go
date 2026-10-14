@@ -98,6 +98,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/api-key-usage", s.mgmt.GetAPIKeyUsage)
 		mgmt.GET("/usage-queue", s.mgmt.GetUsageQueue)
 		mgmt.GET("/recent-requests", s.mgmt.GetRecentRequests)
+		mgmt.GET("/in-flight-requests", s.mgmt.GetInFlightRequests)
 
 		mgmt.GET("/gemini-api-key", s.mgmt.GetGeminiKeys)
 		mgmt.PUT("/gemini-api-key", s.mgmt.PutGeminiKeys)
@@ -135,6 +136,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/force-model-prefix", s.mgmt.PutForceModelPrefix)
 		mgmt.PATCH("/force-model-prefix", s.mgmt.PutForceModelPrefix)
 
+		mgmt.GET("/routing/preview", s.mgmt.GetRoutingPreview)
 		mgmt.GET("/routing/strategy", s.mgmt.GetRoutingStrategy)
 		mgmt.PUT("/routing/strategy", s.mgmt.PutRoutingStrategy)
 		mgmt.PATCH("/routing/strategy", s.mgmt.PutRoutingStrategy)

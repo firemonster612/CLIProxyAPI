@@ -200,20 +200,23 @@ func windowRemainingFraction(window UsageWindow, now time.Time, defaultSpan time
 	return float64(remaining) / float64(span)
 }
 
-// Pick selects the available auth with the lowest weighted time-to-reset.
-func (s *ClosestToResetSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
-	now := time.Now()
-	available, err := getAvailableAuths(auths, provider, model, now)
-	if err != nil {
-		return nil, err
-	}
-	available = preferCodexWebsocketAuths(ctx, provider, available)
+// closestToResetScore is one candidate's standing in a closest-to-reset ranking.
+type closestToResetScore struct {
+	// score is the weighted remaining fraction of the observed windows; lower wins.
+	// It is meaningful only when scored is true.
+	score  float64
+	scored bool
+	// probe marks a candidate without window data whose probe interval has elapsed.
+	probe bool
+}
 
-	entries := snapshotUsageWindows(available)
+// rankClosestToReset scores candidates from a usage-window snapshot. best is the
+// index of the lowest score, or -1 when no candidate has window data. It reads
+// only its arguments, so selection and the routing preview share one ranking.
+func (s *ClosestToResetSelector) rankClosestToReset(available []*Auth, entries map[string]usageWindowEntry, now time.Time) (scores []closestToResetScore, best int) {
 	weeklyWeight, fiveHourWeight := s.weights()
-	bestIndex := -1
-	bestScore := 0.0
-	var probeCandidates []int
+	scores = make([]closestToResetScore, len(available))
+	best = -1
 	for i, candidate := range available {
 		entry, ok := entries[candidate.ID]
 		if ok && entry.hasData() {
@@ -230,35 +233,46 @@ func (s *ClosestToResetSelector) Pick(ctx context.Context, provider, model strin
 				scoreSum += fiveHourWeight * windowRemainingFraction(entry.short, now, defaultShortUsageWindow)
 				weightSum += fiveHourWeight
 			}
-			score := scoreSum / weightSum
-			if bestIndex < 0 || score < bestScore {
-				bestIndex = i
-				bestScore = score
+			scores[i] = closestToResetScore{score: scoreSum / weightSum, scored: true}
+			if best < 0 || scores[i].score < scores[best].score {
+				best = i
 			}
 			continue
 		}
-		if !ok || now.Sub(entry.lastProbe) >= usageWindowProbeInterval {
-			probeCandidates = append(probeCandidates, i)
-		}
+		scores[i].probe = !ok || now.Sub(entry.lastProbe) >= usageWindowProbeInterval
 	}
-	if bestIndex < 0 {
+	return scores, best
+}
+
+// Pick selects the available auth with the lowest weighted time-to-reset.
+func (s *ClosestToResetSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
+	now := time.Now()
+	// routingCandidatesLocked mirrors this availability pass for the routing
+	// preview; change it with this one.
+	available, err := getAvailableAuths(auths, provider, model, now)
+	if err != nil {
+		return nil, err
+	}
+	available = preferCodexWebsocketAuths(ctx, provider, available)
+
+	scores, best := s.rankClosestToReset(available, snapshotUsageWindows(available), now)
+	if best < 0 {
 		// No credential in this pool reports usage windows (yet); spread load
 		// instead of pinning the first auth.
 		return s.fallback.Pick(ctx, provider, model, opts, available)
 	}
-	for _, index := range probeCandidates {
-		probed := available[index]
-		if !tryMarkUsageWindowProbe(probed.ID, now) {
+	for i, candidate := range scores {
+		if !candidate.probe || !tryMarkUsageWindowProbe(available[i].ID, now) {
 			continue
 		}
 		selectorLogEntry(ctx).Debugf(
 			"closest-to-reset: probing auth without window data | auth=%s provider=%s model=%s",
-			probed.ID, provider, model)
-		return probed, nil
+			available[i].ID, provider, model)
+		return available[i], nil
 	}
-	picked := available[bestIndex]
+	picked := available[best]
 	selectorLogEntry(ctx).Debugf(
 		"closest-to-reset: picked auth | auth=%s provider=%s model=%s score=%.4f candidates=%d",
-		picked.ID, provider, model, bestScore, len(available))
+		picked.ID, provider, model, scores[best].score, len(available))
 	return picked, nil
 }

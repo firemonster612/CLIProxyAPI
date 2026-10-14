@@ -409,24 +409,25 @@ func (a *Auth) indexSeed() string {
 
 // EnsureIndex returns a stable index derived from the auth file name or credential identity.
 func (a *Auth) EnsureIndex() string {
+	idx := a.peekIndex()
+	if idx == "" {
+		return ""
+	}
+	a.Index = idx
+	a.indexAssigned = true
+	return idx
+}
+
+// peekIndex returns the index EnsureIndex would assign without assigning it,
+// so read-only views can report it without mutating shared auth state.
+func (a *Auth) peekIndex() string {
 	if a == nil {
 		return ""
 	}
 	if existingIndex := strings.TrimSpace(a.Index); existingIndex != "" {
-		a.Index = existingIndex
-		a.indexAssigned = true
 		return existingIndex
 	}
-
-	seed := a.indexSeed()
-	if seed == "" {
-		return ""
-	}
-
-	idx := stableAuthIndex(seed)
-	a.Index = idx
-	a.indexAssigned = true
-	return idx
+	return stableAuthIndex(a.indexSeed())
 }
 
 // Clone duplicates a model state including nested error details.

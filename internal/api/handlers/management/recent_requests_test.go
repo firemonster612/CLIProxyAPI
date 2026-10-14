@@ -1,12 +1,16 @@
 package management
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/usagehistory"
 )
@@ -85,5 +89,36 @@ func TestParseRecentRequestsLimitDefaultsAndClamps(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("parseRecentRequestsLimit(%q) = %d, %v; want %d", input, got, err, want)
 		}
+	}
+}
+
+func TestGetRecentRequestsLabelsClientKeysByConfigPosition(t *testing.T) {
+	withRecentRequestHistory(t, true,
+		usagehistory.Entry{Provider: "claude", AuthIndex: "a", ClientKeyFingerprint: usagehistory.Fingerprint("sk-secret")},
+		usagehistory.Entry{Provider: "claude", AuthIndex: "a", ClientKeyFingerprint: usagehistory.Fingerprint("unconfigured")},
+		usagehistory.Entry{Provider: "claude", AuthIndex: "a"},
+	)
+	rec := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(rec)
+	ginCtx.Request = httptest.NewRequest(http.MethodGet, "/v0/management/recent-requests", nil)
+	handler := &Handler{cfg: &config.Config{SDKConfig: config.SDKConfig{APIKeys: []string{"other-key", "sk-secret"}}}}
+	handler.GetRecentRequests(ginCtx)
+
+	var body struct {
+		Requests []map[string]any `json:"requests"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var labels []any
+	for _, request := range body.Requests {
+		labels = append(labels, request["client_key_label"])
+	}
+	// Entries are newest first: no key, unconfigured key, configured key #2.
+	if want := []any{nil, "Key ?", "Key #2"}; !reflect.DeepEqual(labels, want) {
+		t.Fatalf("labels = %v, want %v", labels, want)
+	}
+	if strings.Contains(rec.Body.String(), "sk-secret") || !strings.Contains(rec.Body.String(), `"client_key_fingerprint":"746b4ad1ca"`) {
+		t.Fatalf("body = %s, want fingerprint 746b4ad1ca and no raw key", rec.Body.String())
 	}
 }

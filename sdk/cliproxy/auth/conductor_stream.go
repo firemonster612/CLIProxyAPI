@@ -120,11 +120,20 @@ func readStreamBootstrap(ctx context.Context, ch <-chan cliproxyexecutor.StreamC
 	}
 }
 
-func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, resultModel, routeModel string, headers http.Header, buffered []cliproxyexecutor.StreamChunk, remaining <-chan cliproxyexecutor.StreamChunk, aliasResult OAuthModelAliasResult, ephemeralResult bool, opts cliproxyexecutor.Options) *cliproxyexecutor.StreamResult {
+// wrapStreamResult forwards a started stream. finishAttempt ends the attempt's
+// in-flight entry once the stream terminates, before out closes, or once ctx
+// is cancelled: forwarding only notices cancellation on the next upstream
+// chunk, which an idle upstream may never send.
+func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, resultModel, routeModel string, headers http.Header, buffered []cliproxyexecutor.StreamChunk, remaining <-chan cliproxyexecutor.StreamChunk, aliasResult OAuthModelAliasResult, ephemeralResult bool, opts cliproxyexecutor.Options, finishAttempt func()) *cliproxyexecutor.StreamResult {
 	out := make(chan cliproxyexecutor.StreamChunk)
 	streamStart := time.Now()
 	go func() {
 		defer close(out)
+		defer finishAttempt()
+		if ctx != nil {
+			stopFinishOnCancel := context.AfterFunc(ctx, finishAttempt)
+			defer stopFinishOnCancel()
+		}
 		var failed bool
 		forward := true
 		var rewriter *StreamRewriter
@@ -210,9 +219,18 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		return nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
 	}
 	ctx = contextWithRequestedModelAlias(ctx, opts, routeModel)
+	requestedModel := requestedModelAliasFromOptions(opts, routeModel)
 	var lastErr error
 	var upstreamErr error
 	didRefreshOnUnauthorized := false
+	// Each ExecuteStream call is one in-flight attempt. A started stream hands
+	// finishAttempt to wrapStreamResult; every other outcome ends it here.
+	finishAttempt := func() {}
+	defer func() { finishAttempt() }()
+	restartAttempt := func(ctx context.Context, model string) {
+		finishAttempt()
+		finishAttempt = m.beginInFlight(ctx, inFlightKindStream, provider, auth, model, requestedModel)
+	}
 	for idx, execModel := range execModels {
 		ctx = newUpstreamAttemptContext(ctx)
 		resultModel := m.stateModelForExecution(auth, routeModel, execModel, pooled)
@@ -241,6 +259,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		execOpts.Metadata = ensureCanonicalSessionMetadata(execOpts.Metadata, execOpts.Headers, payload)
 		ctx = syncMetadataSessionToContext(ctx, execOpts.Metadata)
 		startStream := time.Now()
+		restartAttempt(ctx, execReq.Model)
 		streamResult, errStream := executor.ExecuteStream(ctx, auth, execReq, execOpts)
 		errStream = markUpstreamExecutionAttemptFromContext(ctx, errStream)
 		if hasUpstreamExecutionAttempt(errStream) {
@@ -248,6 +267,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		}
 		durationStream := time.Since(startStream)
 		if errStream != nil {
+			finishAttempt()
 			if errCtx := ctx.Err(); errCtx != nil {
 				return nil, errCtx
 			}
@@ -261,6 +281,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 					ctx = newUpstreamAttemptContext(ctx)
 					ctx = syncMetadataSessionToContext(ctx, execOpts.Metadata)
 					startRetry := time.Now()
+					restartAttempt(ctx, execReq.Model)
 					streamResult, errStream = executor.ExecuteStream(ctx, auth, execReq, execOpts)
 					errStream = markUpstreamExecutionAttemptFromContext(ctx, errStream)
 					if hasUpstreamExecutionAttempt(errStream) {
@@ -323,6 +344,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			upstreamErr = newStreamBootstrapError(bootstrapErr, streamResult.Headers)
 		}
 		if bootstrapErr != nil {
+			finishAttempt()
 			if errCtx := ctx.Err(); errCtx != nil {
 				discardStreamChunks(streamResult.Chunks)
 				return nil, errCtx
@@ -337,6 +359,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 					didRefreshOnUnauthorized = true
 					ctx = newUpstreamAttemptContext(ctx)
 					startRetry := time.Now()
+					restartAttempt(ctx, execReq.Model)
 					retryStream, retryErr := executor.ExecuteStream(ctx, auth, execReq, execOpts)
 					retryErr = markUpstreamExecutionAttemptFromContext(ctx, retryErr)
 					retryStream, retryErr = validateStreamResult(retryStream, retryErr)
@@ -456,7 +479,9 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			remaining = closedCh
 		}
 		attemptAliasResult := resolveAttemptAliasResult(routing, auth, routeModel, execModel, aliasResult)
-		return m.wrapStreamResult(ctx, auth.Clone(), provider, resultModel, routeModel, streamResult.Headers, buffered, remaining, attemptAliasResult, ephemeralResult, execOpts), nil
+		streamFinish := finishAttempt
+		finishAttempt = func() {}
+		return m.wrapStreamResult(ctx, auth.Clone(), provider, resultModel, routeModel, streamResult.Headers, buffered, remaining, attemptAliasResult, ephemeralResult, execOpts, streamFinish), nil
 	}
 	if lastErr == nil {
 		lastErr = &Error{Code: "auth_not_found", Message: "no upstream model available"}
