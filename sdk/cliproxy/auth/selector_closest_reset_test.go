@@ -154,6 +154,44 @@ func TestRecordUsageWindows_ZeroKeepsPreviousWindow(t *testing.T) {
 	}
 }
 
+func TestRecordUsageWindows_DropsExpiredWindowNotRenewed(t *testing.T) {
+	now := time.Now()
+	// The 5h window reset an hour ago and responses stopped reporting one,
+	// as on an Ultra account that no longer has a 5h limit.
+	usageWindowRegistry.mu.Lock()
+	usageWindowRegistry.m["ctr-ultra"] = usageWindowEntry{short: UsageWindow{Reset: now.Add(-time.Hour)}}
+	usageWindowRegistry.mu.Unlock()
+	weekly := now.Add(3 * 24 * time.Hour)
+	RecordUsageWindows("ctr-ultra", UsageWindow{}, UsageWindow{Reset: weekly})
+
+	entry, ok := lookupTestEntry("ctr-ultra")
+	if !ok {
+		t.Fatalf("registry entry missing")
+	}
+	if !entry.short.Reset.IsZero() {
+		t.Fatalf("short reset = %v, want the expired window dropped", entry.short.Reset)
+	}
+	if !entry.long.Reset.Equal(weekly) {
+		t.Fatalf("long reset = %v, want %v", entry.long.Reset, weekly)
+	}
+}
+
+func TestRecordUsageWindows_KeepsExpiredLongWindow(t *testing.T) {
+	now := time.Now()
+	usageWindowRegistry.mu.Lock()
+	usageWindowRegistry.m["ctr-week-reset"] = usageWindowEntry{long: UsageWindow{Reset: now.Add(-time.Hour)}}
+	usageWindowRegistry.mu.Unlock()
+	RecordUsageWindows("ctr-week-reset", UsageWindow{Reset: now.Add(30 * time.Minute)}, UsageWindow{})
+
+	entry, ok := lookupTestEntry("ctr-week-reset")
+	if !ok {
+		t.Fatalf("registry entry missing")
+	}
+	if entry.long.Reset.IsZero() {
+		t.Fatalf("a short-only response must keep the long window")
+	}
+}
+
 func TestRecordUsageWindows_RejectsNonFutureResets(t *testing.T) {
 	now := time.Now()
 	// A relative value misparsed as an absolute timestamp lands near the
