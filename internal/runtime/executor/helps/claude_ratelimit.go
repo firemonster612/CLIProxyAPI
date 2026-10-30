@@ -75,9 +75,13 @@ func isOverageOrFableOnlyRejection(headers http.Header, status5h, status7d, stat
 	// When Anthropic evaluates an overage-only or 7d_oi claim, it often omits
 	// the 5h status header while 5h utilization is 0.00 (or vice versa).
 	// Require an explicit, valid non-negative utilization below 1.0 before
-	// treating the unmentioned window as healthy.
+	// treating the unmentioned window as healthy. A response with no 5h
+	// headers at all comes from an account without a 5h limit (verified
+	// Ultra), which has no 5h window to exhaust.
 	if shared7dAllowed && status5h == "" {
-		if isClaudeUtilizationHealthy(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-5h-Utilization")) {
+		utilization5h := getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-5h-Utilization")
+		noFiveHourWindow := utilization5h == "" && getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-5h-Reset") == ""
+		if noFiveHourWindow || isClaudeUtilizationHealthy(utilization5h) {
 			return true
 		}
 	}

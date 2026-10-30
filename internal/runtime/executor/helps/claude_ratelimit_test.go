@@ -390,11 +390,13 @@ func TestClaudeHeadersIndicateUnifiedRateLimitRejection_OverageRejection_Utiliza
 	tests := []struct {
 		name        string
 		utilization string
+		reset5h     string
 		wantUnified bool
 	}{
 		{name: "healthy zero utilization", utilization: "0.00", wantUnified: false},
 		{name: "healthy partial utilization", utilization: "0.50", wantUnified: false},
-		{name: "missing utilization", utilization: "", wantUnified: true},
+		{name: "no 5h window at all (uncapped Ultra)", utilization: "", wantUnified: false},
+		{name: "missing utilization with a 5h reset", utilization: "", reset5h: "1767225600", wantUnified: true},
 		{name: "invalid text", utilization: "invalid", wantUnified: true},
 		{name: "NaN", utilization: "NaN", wantUnified: true},
 		{name: "+Inf", utilization: "+Inf", wantUnified: true},
@@ -409,6 +411,9 @@ func TestClaudeHeadersIndicateUnifiedRateLimitRejection_OverageRejection_Utiliza
 			h := baseHeaders()
 			if tt.utilization != "" {
 				h.Set("Anthropic-Ratelimit-Unified-5h-Utilization", tt.utilization)
+			}
+			if tt.reset5h != "" {
+				h.Set("Anthropic-Ratelimit-Unified-5h-Reset", tt.reset5h)
 			}
 			got := ClaudeHeadersIndicateUnifiedRateLimitRejection(h)
 			if got != tt.wantUnified {

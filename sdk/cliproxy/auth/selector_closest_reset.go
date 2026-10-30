@@ -63,8 +63,9 @@ var usageWindowRegistry = struct {
 // credential. Windows whose Reset is zero or not in the future are ignored
 // (a relative or garbage value misparsed as an absolute timestamp must not
 // poison scoring), and an ignored window leaves the previously recorded value
-// for that slot untouched, so a response that only reports one window does
-// not erase knowledge of the other.
+// for that slot untouched, so a response that only reports one window does not
+// erase knowledge of the other. The one exception is a short window that has
+// already reset (see latestShortWindow).
 func RecordUsageWindows(authID string, short, long UsageWindow) {
 	now := time.Now()
 	if !short.Reset.After(now) {
@@ -82,13 +83,25 @@ func RecordUsageWindows(authID string, short, long UsageWindow) {
 	if !ok && len(usageWindowRegistry.m) >= maxUsageWindowEntries {
 		usageWindowRegistry.m = make(map[string]usageWindowEntry)
 	}
-	if !short.Reset.IsZero() {
-		entry.short = short
-	}
+	entry.short = latestShortWindow(entry.short, short, now)
 	if !long.Reset.IsZero() {
 		entry.long = long
 	}
 	usageWindowRegistry.m[authID] = entry
+}
+
+// latestShortWindow picks what to keep in the short slot. A stored short
+// window that has already reset and that the latest response did not renew is
+// dropped: the credential no longer reports one at all (Anthropic's verified
+// Ultra plans have no 5h limit), so keeping it would score a limit that is gone.
+func latestShortWindow(stored, observed UsageWindow, now time.Time) UsageWindow {
+	if !observed.Reset.IsZero() {
+		return observed
+	}
+	if stored.Reset.After(now) {
+		return stored
+	}
+	return UsageWindow{}
 }
 
 // UsageWindowsFor returns the most recently observed usage windows for a
